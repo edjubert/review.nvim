@@ -2,9 +2,10 @@
 -- nvim --headless -u NONE -i NONE -l tests/smoke_read.lua URL [REPO]
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 local url, repo = arg[1], arg[2]
-assert(url, "Pass a GitLab merge request URL.")
+assert(url, "Pass a GitLab MR or GitHub PR URL.")
 local plugin = require("review")
-local provider = require("review.providers.gitlab")
+local target = assert(require("review.url").parse(url))
+local provider = require("review.providers").for_target(target)
 provider.post = function() error("Live publication is forbidden in this check.") end
 local async = require("review.async")
 local checked = async.checked

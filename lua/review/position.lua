@@ -11,16 +11,22 @@ function M.side(rows)
   return delete and "old" or "new"
 end
 
-function M.build(refs, file, rows)
+function M.validate(rows)
   if #rows == 0 then return nil, "No lines selected." end
   local side, err = M.side(rows)
   if not side then return nil, err end
   local key = side .. "_line"
   for i, row in ipairs(rows) do
     if not row[key] or (i > 1 and row[key] ~= rows[i - 1][key] + 1) then
-      return nil, "The selection is not a contiguous range on one side of the MR diff."
+      return nil, "The selection is not a contiguous range on one side of the review diff."
     end
   end
+  return side
+end
+
+function M.build(refs, file, rows)
+  local side, err = M.validate(rows)
+  if not side then return nil, err end
   local last = rows[#rows]
   local position = {
     position_type = "text",

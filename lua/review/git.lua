@@ -1,5 +1,6 @@
 local async = require("review.async")
 local url = require("review.url")
+local providers = require("review.providers")
 local M = {}
 
 function M.run(repo, args)
@@ -28,11 +29,11 @@ function M.prepare(target, project, config)
   local clone_url = config.clone_protocol == "https" and project.http_url_to_repo or project.ssh_url_to_repo
   if type(clone_url) ~= "string"
       or not (clone_url:match("^https?://") or clone_url:match("^ssh://") or clone_url:match("^[%w._%-]+@[^:]+:")) then
-    error("GitLab did not provide a valid clone URL.", 0)
+    error("The provider did not supply a valid clone URL.", 0)
   end
   M.run(repo, {
     "fetch", "--no-tags", "--no-write-fetch-head", "--force", clone_url,
-    ("+refs/merge-requests/%d/head:refs/review/%d/head"):format(target.iid, target.iid),
+    ("+%s:refs/review/%d/head"):format(providers.for_target(target).head_ref(target), target.iid),
   })
   return repo
 end

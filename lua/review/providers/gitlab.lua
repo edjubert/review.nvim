@@ -1,6 +1,13 @@
 local async = require("review.async")
 local url = require("review.url")
-local M = { name = "GitLab" }
+local position = require("review.position")
+local M = { name = "GitLab", cli = "glab", kind = "MR", label = "merge request", prefix = "!" }
+
+function M.head_ref(target)
+  return ("refs/merge-requests/%d/head"):format(target.iid)
+end
+
+M.build_position = position.build
 
 function M.request(target, endpoint, body)
   local argv = { "glab", "api", "--hostname", target.host, "--method", body and "POST" or "GET", endpoint }
@@ -58,6 +65,10 @@ end
 
 function M.current(target)
   return M.request(target, M.mr_path(target))
+end
+
+function M.discussions(target)
+  return M.pages(target, M.mr_path(target) .. "/discussions")
 end
 
 function M.post(target, draft)

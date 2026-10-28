@@ -39,7 +39,7 @@ end
 
 function Session:refresh()
   if not ui.valid(self) then
-    notify("Open a merge request with :Review first.", vim.log.levels.WARN)
+    notify("Open a review with :Review first.", vim.log.levels.WARN)
     return
   end
   if self.submitting then
@@ -47,7 +47,7 @@ function Session:refresh()
     return
   end
   if self.refreshing then
-    notify("The merge request is already refreshing.")
+    notify("The review is already refreshing.")
     return
   end
   local initial = not self.data
@@ -68,7 +68,7 @@ function Session:refresh()
   self.error = nil
   ui.panel(self)
   if not self.current then
-    ui.empty(self, initial and "Loading merge request…" or "Refreshing merge request…")
+    ui.empty(self, initial and "Loading review…" or "Refreshing review…")
   end
   self:task(function()
     local data = self.provider.load(self.target)
@@ -81,7 +81,7 @@ function Session:refresh()
     end
     local latest = self.provider.current(self.target)
     if not position.same_refs(data.mr.diff_refs, latest.diff_refs) then
-      error("The merge request changed while loading. Run :ReviewRefresh to try again.", 0)
+      error("The review changed while loading. Run :ReviewRefresh to try again.", 0)
     end
     if generation ~= self.generation then return end
     self.refreshing = false
@@ -95,7 +95,7 @@ function Session:refresh()
     self.data, self.repo, self.ready = data, repo, true
     self.error = nil
     self:select_commit(index, selection)
-    if not initial then notify("Merge request refreshed.") end
+    if not initial then notify("Review refreshed.") end
   end, function()
     self.refreshing = false
     ui.panel(self)
@@ -194,7 +194,7 @@ function Session:move_hunk(direction, count)
   vim.cmd.normal({ args = { "zvzz" }, bang = true })
 end
 
--- A commit snapshot is mapped to the current MR diff, with unchanged lines
+-- A commit snapshot is mapped to the current review diff, with unchanged lines
 -- only. Never guess a position for code that later commits rewrote.
 function Session:comment_position(current, first, last)
   local selected = {}
@@ -209,13 +209,13 @@ function Session:comment_position(current, first, last)
   local destination_sha = side == "old" and refs.base_sha or refs.head_sha
   local source_path = side == "old" and current.file.old_path or current.file.new_path
   local destination_path = git.rename_path(self.repo, source_sha, destination_sha, source_path)
-  if not destination_path then error("This file no longer exists in the current MR diff.", 0) end
+  if not destination_path then error("This file no longer exists in the current review diff.", 0) end
   local mr_file
   for _, file in ipairs(self.data.diffs) do
     if file[side == "old" and "old_path" or "new_path"] == destination_path then mr_file = file; break end
   end
   if not mr_file or not mr_file.diff or mr_file.diff == "" then
-    error("GitLab has no commentable diff for this file. Open the complete MR or use the web interface.", 0)
+    error(self.provider.name .. " has no commentable diff for this file. Open the complete review or use the web interface.", 0)
   end
   local source_content = side == "old" and current.old or current.new
   local destination_content = git.content(self.repo, destination_sha, destination_path)
@@ -225,13 +225,13 @@ function Session:comment_position(current, first, last)
   for _, row in ipairs(selected) do
     local mapped_line = row[key] and map[row[key]]
     if not mapped_line then
-      error("A later commit changed this line. Select its current position in the complete MR view (gA).", 0)
+      error("A later commit changed this line. Select its current position in the complete review view (gA).", 0)
     end
     local target_row = parsed["by_" .. side][mapped_line]
-    if not target_row then error("This line is outside GitLab's commentable diff context.", 0) end
+    if not target_row then error("This line is outside " .. self.provider.name .. "'s commentable diff context.", 0) end
     mapped[#mapped + 1] = target_row
   end
-  local result, err = position.build(refs, mr_file, mapped)
+  local result, err = self.provider.build_position(refs, mr_file, mapped)
   if not result then error(err, 0) end
   return result
 end
@@ -246,7 +246,7 @@ function Session:save_draft(body, target_position, commit, display)
 end
 
 function Session:comment(first, last)
-  if self.refreshing then notify("Wait for the merge request refresh to finish.", vim.log.levels.WARN); return end
+  if self.refreshing then notify("Wait for the review refresh to finish.", vim.log.levels.WARN); return end
   if not self.current or not self.current.rows then notify("Open a text diff first.", vim.log.levels.WARN); return end
   local current = self.current
   local generation = self.generation
@@ -276,8 +276,9 @@ function Session:show_drafts()
   }, function(draft)
     if not draft then return end
     local actions = { "Edit locally", "Delete locally" }
+    local retry_action = "Allow retry after checking " .. self.provider.name
     if draft.status == "uncertain" or draft.status == "sending" then
-      actions[#actions + 1] = "Allow retry after checking GitLab"
+      actions[#actions + 1] = retry_action
     end
     vim.ui.select(actions, { prompt = "Draft action" }, function(action)
       if action == "Edit locally" then
@@ -292,7 +293,7 @@ function Session:show_drafts()
         drafts.save(self.config, self.target, self.drafts)
         ui.panel(self)
         ui.comments(self)
-      elseif action == "Allow retry after checking GitLab" then
+      elseif action == retry_action then
         draft.status = nil
         drafts.save(self.config, self.target, self.drafts)
       end
@@ -308,7 +309,7 @@ function Session:show_threads()
     local first = discussion.notes and discussion.notes[1]
     local p = first and type(first.position) == "table" and first.position or nil
     if first and (not file or (p and (p.new_path == file.new_path or p.old_path == file.old_path))) then
-      lines[#lines + 1] = "## " .. (first.resolved and "Resolved" or "Discussion")
+      lines[#lines + 1] = "## " .. (first.resolved and "Resolved" or first.outdated and "Outdated discussion" or "Discussion")
       if p then lines[#lines + 1] = (p.new_path or p.old_path) .. ":" .. (p.new_line or p.old_line or "?") end
       for _, note in ipairs(discussion.notes) do
         if not note.system then
@@ -328,7 +329,8 @@ function Session:submit()
   if #self.drafts == 0 then notify("No local drafts to submit."); return end
   for _, draft in ipairs(self.drafts) do
     if draft.status == "uncertain" or draft.status == "sending" then
-      notify("An earlier publish attempt has an unknown outcome. Check GitLab, then edit the draft's retry state with :ReviewDrafts.",
+      notify("An earlier publish attempt has an unknown outcome. Check " .. self.provider.name
+        .. ", then edit the draft's retry state with :ReviewDrafts.",
         vim.log.levels.WARN)
       return
     end
@@ -337,12 +339,16 @@ function Session:submit()
   local preview = {}
   for i, draft in ipairs(self.drafts) do
     local p = draft.position
-    preview[#preview + 1] = ("## %d · %s:%s"):format(i, p.new_path, p.new_line or p.old_line)
+    local line = p.new_line or p.old_line
+    local first = p.line_range and p.line_range.start
+    local start = first and (first.new_line or first.old_line)
+    local range = start and start ~= line and (start .. "–" .. line) or tostring(line)
+    preview[#preview + 1] = ("## %d · %s:%s"):format(i, p.new_path, range)
     vim.list_extend(preview, vim.split(draft.body, "\n", { plain = true }))
     preview[#preview + 1] = ""
   end
   ui.document("Review drafts · q closes preview", preview)
-  vim.ui.select({ "Keep local", "Publish " .. #self.drafts .. " comment(s) to GitLab" },
+  vim.ui.select({ "Keep local", "Publish " .. #self.drafts .. " comment(s) to " .. self.provider.name },
     { prompt = "Publish these review comments?" }, function(choice)
       if not choice or choice == "Keep local" or self.closed or self.submitting or self.refreshing then return end
       self.submitting = true
@@ -351,7 +357,7 @@ function Session:submit()
         for _, draft in ipairs(self.drafts) do
           if draft.status ~= "published" and not position.same_refs(draft.position, latest.diff_refs) then
             self.submitting = false
-            error("The MR diff changed since a draft was created. Drafts remain local; choose updated positions.", 0)
+            error("The review diff changed since a draft was created. Drafts remain local; choose updated positions.", 0)
           end
         end
         local count = 0
@@ -360,7 +366,7 @@ function Session:submit()
           if draft.status ~= "published" then
             local current_mr = self.provider.current(self.target)
             if not position.same_refs(draft.position, current_mr.diff_refs) then
-              error("The MR changed during submission. Remaining drafts stay local.", 0)
+              error("The review changed during submission. Remaining drafts stay local.", 0)
             end
             draft.status = "sending"
             drafts.save(self.config, self.target, self.drafts)
@@ -368,7 +374,8 @@ function Session:submit()
             if not ok then
               draft.status = "uncertain"
               pcall(drafts.save, self.config, self.target, self.drafts)
-              error("Publication outcome could not be confirmed. Check GitLab before retrying. " .. tostring(response), 0)
+              error("Publication outcome could not be confirmed. Check " .. self.provider.name
+                .. " before retrying. " .. tostring(response), 0)
             end
             draft.status, draft.published_id = "published", response.id
             drafts.save(self.config, self.target, self.drafts)
@@ -378,7 +385,7 @@ function Session:submit()
           drafts.save(self.config, self.target, self.drafts)
         end
         self.submitting = false
-        self.data.discussions = self.provider.pages(self.target, self.provider.mr_path(self.target) .. "/discussions")
+        self.data.discussions = self.provider.discussions(self.target, self.data.mr.diff_refs, self.data.diffs)
         ui.panel(self)
         ui.comments(self)
         notify(("Published %d comment(s)."):format(count))

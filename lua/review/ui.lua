@@ -92,7 +92,7 @@ function M.bind(session, buf)
   local refresh_key = M.refresh_key(session)
   if refresh_key then
     vim.keymap.set("n", refresh_key, function() session:refresh() end,
-      { buffer = buf, silent = true, desc = "Refresh the merge request" })
+      { buffer = buf, silent = true, desc = "Refresh the review" })
   end
 end
 
@@ -149,18 +149,18 @@ function M.create(session)
     end, { buffer = session.viewer_buf, silent = true, desc = "Draft a review comment" })
   end
   vim.api.nvim_set_current_win(session.viewer_win)
-  set_lines(session.viewer_buf, { "Loading merge request…" })
+  set_lines(session.viewer_buf, { "Loading review…" })
   M.panel(session)
 end
 
 local function footer_hints(session)
   return {
-    " Enter open · gA complete MR",
+    " Enter open · gA complete " .. session.provider.kind,
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
     " ]c/[c commits · ]f/[f files",
     " ]h/[h next/previous change",
     " gd drafts · gt discussions",
-    " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh MR",
+    " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh " .. session.provider.kind,
     " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
   }
 end
@@ -210,7 +210,7 @@ end
 function M.panel(session)
   if not M.valid(session) or not vim.api.nvim_buf_is_valid(session.panel_buf) then return end
   local lines = {
-    "!" .. session.target.iid .. " " .. (session.data and session.data.mr.title or "Loading…"),
+    session.provider.prefix .. session.target.iid .. " " .. (session.data and session.data.mr.title or "Loading…"),
     "",
   }
   if session.refreshing and session.data then lines[1] = lines[1] .. " · refreshing…" end
@@ -241,7 +241,7 @@ function M.panel(session)
     end
     if session.files and #session.files == 0 then lines[#lines + 1] = "    No changed files" end
   end
-  entry((session.commit_index == 0 and "▾ " or "▸ ") .. "Complete merge request",
+  entry((session.commit_index == 0 and "▾ " or "▸ ") .. "Complete " .. session.provider.label,
     { commit = 0 }, "ReviewCommit", session.commit_index == 0)
   if session.commit_index == 0 then files() end
   for index, commit in ipairs(session.data and session.data.commits or {}) do
@@ -285,7 +285,7 @@ function M.render(session, current)
   vim.wo[win].wrap = false
   vim.wo[win].signcolumn = "no"
   local title = current.file.new_path .. " · "
-    .. (session.commit_index == 0 and "complete MR" or current.head:sub(1, 8))
+    .. (session.commit_index == 0 and "complete " .. session.provider.kind or current.head:sub(1, 8))
   vim.wo[win].winbar = title:gsub("%%", "%%%%")
   for i, row in ipairs(current.rows) do
     local change = row.kind == "add" and "DiffAdd" or row.kind == "delete" and "DiffDelete" or nil
@@ -308,7 +308,7 @@ function M.render(session, current)
   end
   M.comments(session)
   -- A different line number belongs to each side; the buffer's own number
-  -- includes deleted rows and must never be used for a GitLab position.
+  -- includes deleted rows and must never be used for a provider position.
   vim.api.nvim_win_set_cursor(win, { 1, 0 })
   vim.api.nvim_set_current_win(win)
 end
