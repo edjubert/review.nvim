@@ -451,6 +451,269 @@ test("submit shortcut previews from either review window and keeps publication e
   vim.ui.select, ui.document, provider.post = select_before, document_before, post_before
 end)
 
+local function inline_fixture(opts)
+  local s = Session.new(target, vim.tbl_deep_extend("force", config, opts or {}))
+  s.ready, s.repo = true, "/explicit/inline/repo"
+  local path = "code.lua"
+  local function discussion(id, side, author, body)
+    local p = {
+      old_path = path, new_path = path, base_sha = refs.base_sha, head_sha = refs.head_sha,
+      [side .. "_line"] = 3,
+      line_range = { start = { [side .. "_line"] = 2 }, ["end"] = { [side .. "_line"] = 3 } },
+    }
+    return { id = id, notes = {
+      { author = { username = author }, body = body, position = p },
+    } }
+  end
+  local new = discussion("new", "new", "alice", "First message\nSecond line")
+  new.notes[#new.notes + 1] = { system = true, body = "System event" }
+  new.notes[#new.notes + 1] = { author = { username = "bob" }, body = "A reply" }
+  local other_file = discussion("other-file", "new", "other", "Other file")
+  other_file.notes[1].position.new_path = "other.lua"
+  s.data = {
+    mr = { title = "Inline discussions", diff_refs = refs },
+    commits = { { id = "early", parent_ids = { "base" }, title = "Early commit" } },
+    diffs = {
+      { old_path = path, new_path = path,
+        diff = "@@ -1,4 +1,4 @@\n one\n-old-a\n-old-b\n+new-a\n+new-b\n four\n" },
+    },
+    discussions = {
+      new, discussion("old", "old", "carol", "Deleted range"),
+      discussion("second", "new", "dave", "Another discussion"),
+      { notes = { { author = { username = "general" }, body = "General comment" } } },
+      other_file,
+    },
+  }
+  s.base, s.head = refs.base_sha, refs.head_sha
+  s.files, s.file_index = { { old_path = path, new_path = path, status = "M" } }, 1
+  ui.create(s)
+  s.current = {
+    file = s.files[1], base = s.base, head = s.head,
+    old = "one\nold-a\nold-b\nfour\n", new = "one\nnew-a\nnew-b\nfour\n",
+  }
+  s.current.rows = assert(diff.build(s.current.old, s.current.new))
+  ui.render(s, s.current)
+  return s
+end
+
+local function comment_marks(s)
+  return vim.api.nvim_buf_get_extmarks(s.viewer_buf,
+    vim.api.nvim_create_namespace("review.comments"), 0, -1, { details = true })
+end
+local function virtual_text(mark)
+  local lines = {}
+  for _, chunks in ipairs(mark[4].virt_lines or {}) do
+    local parts = {}
+    for _, chunk in ipairs(chunks) do parts[#parts + 1] = chunk[1] end
+    lines[#lines + 1] = table.concat(parts)
+  end
+  return table.concat(lines, "\n")
+end
+
+test("inline discussions default to hidden and validate their configuration", function()
+  local review = require("review")
+  local before = vim.deepcopy(review.config)
+  review.setup()
+  eq(review.config.inline_comments, false)
+  eq(review.config.keymaps.toggle_comments, "<leader>rt")
+  raises(function() review.setup({ inline_comments = "yes" }) end, "must be a boolean")
+  raises(function() review.setup({ keymaps = { toggle_comments = true } }) end, "toggle_comments")
+  review.setup(before)
+  local s = inline_fixture()
+  eq(s.inline_comments, false)
+  for _, mark in ipairs(comment_marks(s)) do eq(#(mark[4].virt_lines or {}), 0) end
+  s:close()
+end)
+
+test("inline discussion ranges anchor on added and deleted lines with all replies", function()
+  local s = inline_fixture({ inline_comments = true })
+  local marks = comment_marks(s)
+  eq(#marks, 2)
+  eq(marks[1][2], 2) -- Last deleted line: old line 3, zero-based buffer row 2.
+  eq(marks[2][2], 4) -- Last added line: new line 3, zero-based buffer row 4.
+  local old, new = virtual_text(marks[1]), virtual_text(marks[2])
+  assert(old:find("@carol", 1, true) and old:find("old 2–3", 1, true))
+  assert(new:find("@alice", 1, true) and new:find("new 2–3", 1, true))
+  assert(new:find("First message", 1, true) and new:find("@bob", 1, true))
+  assert(new:find("A reply", 1, true) and new:find("@dave", 1, true))
+  assert(not new:find("System event", 1, true))
+  assert(not new:find("General comment", 1, true) and not new:find("Other file", 1, true))
+  s:close()
+end)
+
+test("inline toggle keeps buffer positions, cursor, local drafts and transports unchanged", function()
+  local review = require("review")
+  local before = review.session
+  local content, rename, request, post = git.content, git.rename_path, provider.request, provider.post
+  local s = inline_fixture()
+  s.drafts = { drafts.new("Local", assert(position.build(refs, s.current.file,
+    { { kind = "add", new_line = 3 } })), "head") }
+  ui.comments(s)
+  git.content = function(_, sha) return sha == "head" and s.current.new or s.current.old end
+  git.rename_path = function(_, _, _, path) return path end
+  local reads, writes = 0, 0
+  provider.request = function() reads = reads + 1; error("Unexpected request") end
+  provider.post = function() writes = writes + 1; error("Unexpected write") end
+  review.session = s
+  review._commands()
+  local lines = vim.api.nvim_buf_get_lines(s.viewer_buf, 0, -1, false)
+  vim.api.nvim_win_set_cursor(s.viewer_win, { 5, 2 })
+  local before_position = s:comment_position(s.current, 4, 5)
+  vim.cmd.ReviewToggleComments()
+  eq(s.inline_comments, true)
+  eq(vim.api.nvim_win_get_cursor(s.viewer_win), { 5, 2 })
+  eq(vim.api.nvim_buf_get_lines(s.viewer_buf, 0, -1, false), lines)
+  eq(vim.bo[s.viewer_buf].modifiable, false)
+  eq(s:comment_position(s.current, 4, 5), before_position)
+  local marks = comment_marks(s)
+  assert(marks[2][4].virt_text[1][1]:find("local draft", 1, true))
+  assert(#marks[2][4].virt_lines > 0)
+  local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
+  assert(hints:find("inline comments (on)", 1, true))
+  vim.cmd.ReviewToggleComments()
+  for _, mark in ipairs(comment_marks(s)) do eq(#(mark[4].virt_lines or {}), 0) end
+  eq(reads, 0); eq(writes, 0); eq(#s.drafts, 1)
+  s:close()
+  review.session = before
+  git.content, git.rename_path, provider.request, provider.post = content, rename, request, post
+end)
+
+test("inline comment shortcut toggles from both windows and can be customized or disabled", function()
+  for _, key in ipairs({ "<leader>rt", "<leader>rT", false }) do
+    local s = inline_fixture({ keymaps = { toggle_comments = key } })
+    if key then
+      for _, win in ipairs({ s.panel_win, s.viewer_win }) do
+        vim.api.nvim_set_current_win(win)
+        local mapping = vim.fn.maparg(key, "n", false, true)
+        eq(mapping.buffer, 1)
+        mapping.callback()
+      end
+      eq(s.inline_comments, false)
+    else
+      for _, buf in ipairs({ s.panel_buf, s.viewer_buf }) do
+        local maps = vim.api.nvim_buf_get_keymap(buf, "n")
+        assert(not vim.iter(maps):any(function(map)
+          return map.desc == "Show or hide inline discussions"
+        end))
+      end
+      local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
+      assert(hints:find(":ReviewToggleComments", 1, true))
+      s:toggle_comments()
+      eq(s.inline_comments, true)
+    end
+    s:close()
+  end
+end)
+
+test("inline discussions wrap Unicode text and reflow on window resize", function()
+  local s = inline_fixture({ inline_comments = true })
+  local body = string.rep("é🙂界 long-word ", 8) .. "\tend"
+  s.data.discussions = { s.data.discussions[1] }
+  s.data.discussions[1].notes = { s.data.discussions[1].notes[1] }
+  s.data.discussions[1].notes[1].body = body
+  local counts = {}
+  for _, width in ipairs({ 35, 60 }) do
+    vim.api.nvim_win_set_width(s.viewer_win, width)
+    vim.api.nvim_exec_autocmds("WinResized", { modeline = false })
+    local marks = comment_marks(s)
+    local parts = {}
+    for _, chunks in ipairs(marks[1][4].virt_lines) do
+      local text = ""
+      for _, chunk in ipairs(chunks) do
+        text = text .. chunk[1]
+        if chunk[2] == "ReviewCommentBody" then parts[#parts + 1] = chunk[1] end
+      end
+      assert(vim.fn.strdisplaywidth(text) <= vim.api.nvim_win_get_width(s.viewer_win))
+    end
+    eq(table.concat(parts), body:gsub("\t", "    "))
+    counts[#counts + 1] = #marks[1][4].virt_lines
+  end
+  assert(counts[1] > counts[2])
+  s:close()
+end)
+
+test("inline discussion blocks use mapped commit lines and disappear for unavailable ranges", function()
+  local s = inline_fixture({ inline_comments = true })
+  s.data.discussions = { s.data.discussions[1] }
+  local content, files = git.content, git.files
+  local root_note = s.data.discussions[1].notes[1]
+  root_note.position.new_line = 4
+  root_note.position.line_range.start.new_line = 3
+  root_note.position.line_range["end"].new_line = 4
+  git.content = function() return "one\nlater\nnew-a\nnew-b\nfour\n" end
+  git.files = function() return {} end
+  s.current.head = "early"
+  s:map_threads(s.current, s.generation)
+  ui.comments(s)
+  local marks = comment_marks(s)
+  eq(#marks, 1); eq(marks[1][2], 4)
+  assert(virtual_text(marks[1]):find("new 2–3", 1, true))
+  s.current.new = "one\nrewritten\nnew-b\nfour\n"
+  s.current.rows = assert(diff.build(s.current.old, s.current.new))
+  s:map_threads(s.current, s.generation)
+  ui.render(s, s.current)
+  eq(#comment_marks(s), 0)
+  s.current = { file = s.files[1], error = "Binary file" }
+  ui.render(s, s.current)
+  eq(#comment_marks(s), 0)
+  s:close()
+  git.content, git.files = content, files
+end)
+
+test("inline toggle survives file and commit navigation and successful or failed refreshes", function()
+  local s = inline_fixture()
+  local saved = {
+    load = provider.load, current = provider.current,
+    prepare = git.prepare, ensure = git.ensure, files = git.files, content = git.content,
+  }
+  local data, old, new = vim.deepcopy(s.data), s.current.old, s.current.new
+  provider.load = function() return vim.deepcopy(data) end
+  provider.current = function() return { diff_refs = refs } end
+  git.prepare = function() return s.repo end
+  git.ensure = function() end
+  git.files = function()
+    return {
+      { old_path = "code.lua", new_path = "code.lua", status = "M" },
+      { old_path = "other.lua", new_path = "other.lua", status = "M" },
+    }
+  end
+  git.content = function(_, sha) return sha == refs.base_sha and old or new end
+  local ok, err = xpcall(function()
+    local function displayed(path, commit)
+      assert(vim.wait(10000, function()
+        return s.error or (s.current and s.current.file.new_path == path and s.commit_index == commit)
+      end, 10))
+      assert(not s.error, s.error)
+      eq(s.inline_comments, true)
+      assert(#comment_marks(s) > 0 and #comment_marks(s)[1][4].virt_lines > 0)
+    end
+    s:toggle_comments()
+    s:select_commit(0)
+    displayed("code.lua", 0)
+    s:select_file(2)
+    displayed("other.lua", 0)
+    s:select_commit(1)
+    displayed("code.lua", 1)
+    s:refresh()
+    displayed("code.lua", 1)
+    s:select_commit(0)
+    displayed("code.lua", 0)
+    local lines = vim.api.nvim_buf_get_lines(s.viewer_buf, 0, -1, false)
+    local blocks = comment_marks(s)
+    provider.load = function() error("Simulated refresh failure") end
+    s:refresh()
+    assert(vim.wait(10000, function() return not s.refreshing end, 10))
+    assert(s.error:find("Simulated refresh failure", 1, true))
+    eq(s.inline_comments, true)
+    eq(vim.api.nvim_buf_get_lines(s.viewer_buf, 0, -1, false), lines)
+    eq(comment_marks(s), blocks)
+  end, debug.traceback)
+  s:close()
+  provider.load, provider.current = saved.load, saved.current
+  git.prepare, git.ensure, git.files, git.content = saved.prepare, saved.ensure, saved.files, saved.content
+  assert(ok, err)
+end)
+
 vim.fn.delete(root, "rf")
 print(("%d passed, %d failed"):format(passed, failed))
 if failed > 0 then vim.cmd("cquit 1") end

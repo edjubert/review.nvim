@@ -17,6 +17,7 @@ function Session.new(target, config)
   return setmetatable({
     target = target, config = config, drafts = drafts.load(config, target),
     provider = providers.for_target(target),
+    inline_comments = config.inline_comments == true,
     commit_index = 0, files = {}, closed = false, generation = 0,
   }, Session)
 end
@@ -388,6 +389,13 @@ function Session:show_info()
     vim.list_extend(lines, vim.split(description:gsub("\r\n", "\n"), "\n", { plain = true }))
   end
   ui.document(("%s %s%d · q: close"):format(self.provider.name, self.provider.prefix, self.target.iid), lines)
+end
+
+function Session:toggle_comments()
+  if not ui.valid(self) then return end
+  self.inline_comments = not self.inline_comments
+  ui.comments(self)
+  ui.footer(self)
 end
 
 function Session:show_thread_at_cursor()

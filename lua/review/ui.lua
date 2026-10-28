@@ -19,6 +19,9 @@ function M.highlights()
     ReviewSelected = "CursorLine",
     ReviewDraftCount = "Special",
     ReviewHelp = "Comment",
+    ReviewCommentBorder = "FloatBorder",
+    ReviewCommentAuthor = "Title",
+    ReviewCommentBody = "NormalFloat",
   }
   for name, link in pairs(links) do vim.api.nvim_set_hl(0, name, { default = true, link = link }) end
 end
@@ -75,6 +78,12 @@ function M.info_key(session)
   return key
 end
 
+function M.toggle_comments_key(session)
+  local key = (session.config.keymaps or {}).toggle_comments
+  if key == nil then return "<leader>rt" end
+  return key
+end
+
 function M.bind(session, buf)
   local maps = {
     ["]c"] = function() session:move_commit(1) end,
@@ -107,6 +116,11 @@ function M.bind(session, buf)
     vim.keymap.set("n", info_key, function() session:show_info() end,
       { buffer = buf, silent = true, desc = "Show the MR/PR title and description" })
   end
+  local toggle_comments_key = M.toggle_comments_key(session)
+  if toggle_comments_key then
+    vim.keymap.set("n", toggle_comments_key, function() session:toggle_comments() end,
+      { buffer = buf, silent = true, desc = "Show or hide inline discussions" })
+  end
 end
 
 function M.create(session)
@@ -131,7 +145,10 @@ function M.create(session)
   session.ui_group = vim.api.nvim_create_augroup("ReviewUI" .. serial, { clear = true })
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
     group = session.ui_group,
-    callback = function() M.footer(session) end,
+    callback = function()
+      M.footer(session)
+      if session.inline_comments then M.comments(session) end
+    end,
   })
   vim.api.nvim_create_autocmd("WinClosed", {
     group = session.ui_group,
@@ -173,6 +190,8 @@ local function footer_hints(session)
     " ]c/[c commits · ]f/[f files",
     " ]h/[h next/previous change",
     " gt thread here · gT all threads",
+    " " .. (M.toggle_comments_key(session) or ":ReviewToggleComments")
+      .. " inline comments (" .. (session.inline_comments and "on" or "off") .. ")",
     " gd drafts · " .. (M.info_key(session) or ":ReviewInfo") .. " info",
     " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh " .. session.provider.kind,
     " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
@@ -190,8 +209,8 @@ function M.footer(session)
   local row = panel_height - height
   if not session.help_buf or not vim.api.nvim_buf_is_valid(session.help_buf) then
     session.help_buf = scratch("review://" .. session.serial .. "/help", "review")
-    set_lines(session.help_buf, hints)
   end
+  set_lines(session.help_buf, hints)
   if not session.help_win or not vim.api.nvim_win_is_valid(session.help_win) then
     session.help_win = vim.api.nvim_open_win(session.help_buf, false, {
       relative = "win", win = session.panel_win, row = row, col = 0,
@@ -284,6 +303,7 @@ function M.render(session, current)
   local buf, win = session.viewer_buf, session.viewer_win
   if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_win_is_valid(win) then return end
   vim.api.nvim_buf_clear_namespace(buf, namespace, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, comment_namespace, 0, -1)
   if not current.rows then
     set_lines(buf, { current.error or "Unable to display this file." })
     vim.bo[buf].filetype = ""
@@ -327,11 +347,66 @@ function M.render(session, current)
   vim.api.nvim_set_current_win(win)
 end
 
+-- Wrap virtual text ourselves: virt_lines do not follow the window's wrap option.
+local function wrap_comment(text, width)
+  local chars = vim.fn.split(text:gsub("\t", "    "):gsub("\r", ""), "\\zs")
+  local lines, first = {}, 1
+  while first <= #chars do
+    local last, space, cells = first - 1, nil, 0
+    while last < #chars do
+      local char = chars[last + 1]
+      local size = vim.fn.strdisplaywidth(char, cells)
+      if cells + size > width and last >= first then break end
+      last, cells = last + 1, cells + size
+      if char:match("%s") then space = last end
+    end
+    if last < #chars and space then last = space end
+    lines[#lines + 1] = table.concat(chars, "", first, last)
+    first = last + 1
+  end
+  return #lines > 0 and lines or { "" }
+end
+
+local function inline_discussion(session, discussion)
+  local root = threads.root(discussion)
+  local anchor = threads.anchor(discussion, session.current)
+  if not root or not anchor then return {} end
+  local width = math.max(1, vim.api.nvim_win_get_width(session.viewer_win) - 6)
+  local lines = {}
+  local function append(prefix, text, group)
+    for index, part in ipairs(wrap_comment(text, width)) do
+      lines[#lines + 1] = {
+        { index == 1 and prefix or "  │  ", "ReviewCommentBorder" },
+        { part, group },
+      }
+    end
+  end
+  local status = root.resolved and "Resolved discussion"
+    or root.outdated and "Outdated discussion" or "Discussion"
+  local range = anchor.first ~= anchor.last and (anchor.first .. "–" .. anchor.last) or tostring(anchor.last)
+  for _, note in ipairs(discussion.notes) do
+    if not note.system then
+      local author = "@" .. ((note.author or {}).username or "unknown"):gsub("[\r\n\t]", " ")
+      if note == root then
+        append("  ╭─ ", author .. " · " .. status .. " · " .. anchor.side .. " " .. range, "ReviewCommentAuthor")
+      else
+        append("  │  ", "", "ReviewCommentBody")
+        append("  │  ", author, "ReviewCommentAuthor")
+      end
+      for _, text in ipairs(vim.split(note.body or "", "\n", { plain = true })) do
+        append("  │  ", text, "ReviewCommentBody")
+      end
+    end
+  end
+  append("  ╰─ ", "gt: full discussion", "ReviewHelp")
+  return lines
+end
+
 function M.comments(session)
   local current, buf = session.current, session.viewer_buf
   if not current or not current.rows or not buf or not vim.api.nvim_buf_is_valid(buf) then return end
   vim.api.nvim_buf_clear_namespace(buf, comment_namespace, 0, -1)
-  local labels = {}
+  local labels, blocks = {}, {}
   local function mark(old_line, new_line, text)
     for i, row in ipairs(current.rows) do
       if (new_line and row.new_line == new_line) or (not new_line and old_line and row.old_line == old_line) then
@@ -355,12 +430,17 @@ function M.comments(session)
     if row then
       labels[row] = labels[row] or {}
       labels[row][#labels[row] + 1] = "discussion (gt)"
+      if session.inline_comments then
+        blocks[row] = blocks[row] or {}
+        vim.list_extend(blocks[row], inline_discussion(session, discussion))
+      end
     end
   end
   for row, texts in pairs(labels) do
     vim.api.nvim_buf_set_extmark(buf, comment_namespace, row - 1, 0, {
       virt_text = { { "  ● " .. table.concat(texts, " · "), "Comment" } },
       virt_text_pos = "eol", priority = 30,
+      virt_lines = blocks[row], virt_lines_leftcol = true,
     })
   end
 end

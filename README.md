@@ -21,6 +21,7 @@ in Neovim.
 - Preview and explicitly publish drafts as inline discussions on GitLab, GitHub
   or Codeberg.
 - Open the discussion under the cursor or browse all review discussions.
+- Toggle discussion messages and replies directly below their commented lines.
 - Jump from a discussion to its commented line.
 - Refresh the open review without losing local drafts.
 
@@ -102,7 +103,7 @@ With lazy.nvim:
   "edjubert/review.nvim",
   cmd = {
     "Review", "ReviewInfo", "ReviewComment", "ReviewDrafts",
-    "ReviewThreads", "ReviewRefresh", "ReviewSubmit", "ReviewClose",
+    "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit", "ReviewClose",
   },
   opts = {},
 }
@@ -151,6 +152,7 @@ merge base.
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
 | `:ReviewDrafts` | Inspect, edit or delete local drafts |
 | `:ReviewThreads` | Read all discussions and jump to their comment lines |
+| `:ReviewToggleComments` | Show or hide discussion messages and replies inline |
 | `:ReviewRefresh` | Reload the review, commits, diffs and discussions |
 | `:ReviewSubmit` | Preview drafts and choose whether to publish |
 | `:ReviewClose` | Close the review tab |
@@ -169,6 +171,7 @@ merge base.
 | `<leader>rs` in the panel or diff | Preview drafts and choose whether to publish |
 | `<leader>rr` in the panel or diff | Refresh the review |
 | `<leader>ri` in the panel or diff | Show the MR/PR title and description |
+| `<leader>rt` in the panel or diff | Toggle inline discussion messages and replies |
 | `gd` | Local drafts |
 | `gt` in the diff | Open discussions attached to the cursor line or range |
 | `gT` | Open all discussions in the MR/PR |
@@ -277,6 +280,28 @@ If its line was rewritten/deleted, its file is no longer in the review diff, or
 the provider does not expose its original revision, the discussion stays open
 with an explanatory message. Comments without a file line remain readable.
 
+### Inline discussions
+
+Run `:ReviewToggleComments` or press `<leader>rt` to show or hide discussions
+directly below their commented lines. A range discussion appears below its last
+line, with the author, message and replies. Multiple discussions on the same line
+appear together.
+
+Messages use virtual lines, leaving the diff content and comment positions
+unchanged. Long lines wrap to the diff window's width. Markdown is displayed as
+text; use `gt` to open the complete discussion in a Markdown window.
+
+Inline discussions are hidden by default. Set `inline_comments = true` to show
+them when opening a review. The toggle applies to the current review and survives
+file/commit navigation and refreshes. Configure `keymaps.toggle_comments` to
+change the shortcut, or set it to `false` to keep only the command.
+
+Only discussions that can be mapped to the displayed diff appear inline.
+General comments and discussions on unavailable lines remain accessible with
+`gT` or `:ReviewThreads`. Local drafts keep their compact markers.
+Customize `ReviewCommentBorder`, `ReviewCommentAuthor` and `ReviewCommentBody`
+to change the blocks' colors.
+
 ### Line positions in commit views
 
 A comment written in a commit view is attached to the current **MR/PR discussion**.
@@ -315,11 +340,13 @@ saved if one exists. Finish or discard that pending review on Codeberg first.
 ```lua
 require("review").setup({
   panel_width = 44,
+  inline_comments = false, -- initially show only discussion markers
   keymaps = {
     comment = "<leader>rc", -- normal/visual; false disables this mapping
     submit = "<leader>rs",  -- normal, panel/diff; false disables this mapping
     refresh = "<leader>rr", -- normal, panel/diff; false disables this mapping
     info = "<leader>ri",    -- normal, panel/diff; false disables this mapping
+    toggle_comments = "<leader>rt", -- normal, panel/diff; false disables this mapping
   },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected

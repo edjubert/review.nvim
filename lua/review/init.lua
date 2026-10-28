@@ -1,7 +1,11 @@
 local M = {}
 local defaults = {
   panel_width = 44,
-  keymaps = { comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr", info = "<leader>ri" },
+  inline_comments = false,
+  keymaps = {
+    comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr",
+    info = "<leader>ri", toggle_comments = "<leader>rt",
+  },
   clone_protocol = "ssh",
   repo = nil,
   cache_dir = vim.fn.stdpath("cache") .. "/review",
@@ -12,7 +16,8 @@ M.config = vim.deepcopy(defaults)
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
-  for _, name in ipairs({ "comment", "submit", "refresh", "info" }) do
+  assert(type(M.config.inline_comments) == "boolean", "inline_comments must be a boolean")
+  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments" }) do
     assert(type(M.config.keymaps[name]) == "string" or M.config.keymaps[name] == false,
       "keymaps." .. name .. " must be a mapping string or false")
   end
@@ -69,6 +74,14 @@ function M.info()
   M.session:show_info()
 end
 
+function M.toggle_comments()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:toggle_comments()
+end
+
 function M._commands()
   vim.api.nvim_create_user_command("Review", function(args) M.open(args.args) end,
     { nargs = "?", desc = "Open a GitLab MR, GitHub PR or Codeberg PR URL" })
@@ -80,6 +93,8 @@ function M._commands()
     { desc = "Inspect, edit or delete local drafts" })
   vim.api.nvim_create_user_command("ReviewThreads", function() if M.session then M.session:show_threads() end end,
     { desc = "Read all review discussions and jump to comment lines" })
+  vim.api.nvim_create_user_command("ReviewToggleComments", M.toggle_comments,
+    { desc = "Show or hide discussions inline in the review diff" })
   vim.api.nvim_create_user_command("ReviewRefresh", M.refresh,
     { desc = "Reload the open review, commits, diffs and discussions" })
   vim.api.nvim_create_user_command("ReviewSubmit", function() if M.session then M.session:submit() end end,

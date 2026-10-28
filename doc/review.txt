@@ -50,6 +50,10 @@ COMMANDS
     Read all discussions across the MR/PR.
     Enter on a discussion jumps to its comment line; q closes the window.
 
+:ReviewToggleComments                                *:ReviewToggleComments*
+    Show or hide discussion messages and replies below their diff lines.
+    Keep the chosen state across files, commits and refreshes.
+
 :ReviewRefresh                                              *:ReviewRefresh*
     Reload the MR/PR, commits, diffs and discussions in the existing tab.
     Keep the selected commit and file when they still exist; otherwise open
@@ -80,6 +84,7 @@ Both: ]c/[c next/previous commit; ]f/[f next/previous file;
       gt discussion under the cursor (diff only); gT all discussions;
       <leader>rr refresh the review;
       <leader>ri show the MR/PR title and description;
+      <leader>rt toggle inline discussion messages and replies;
       <leader>rs preview and submit drafts; q close.
 
 Opening a file focuses its first change block, opens any folds covering that
@@ -116,17 +121,36 @@ unchanged. If the line was rewritten/deleted, the file is no longer in the
 review diff, or its original revision is unavailable, the discussion stays
 open with an explanatory message. General comments have no line to jump to.
 
+INLINE DISCUSSIONS                                    *review-inline-comments*
+
+:ReviewToggleComments or <leader>rt shows/hides discussion blocks below their
+commented lines. Range comments appear below the last line. Authors, messages
+and replies are displayed; multiple discussions on one line appear together.
+Only discussions mapped to the current diff are shown. General comments and
+unavailable lines remain accessible through gT or :ReviewThreads.
+
+Blocks use virtual lines, preserving the diff content and comment positions.
+Long lines wrap to the window width. Markdown is shown as text; gt opens the
+full discussion in a Markdown window. Local drafts retain compact markers.
+
+inline_comments defaults to false. Set it to true to show blocks initially.
+The toggle is scoped to the open review and survives navigation and refresh.
+Set keymaps.toggle_comments to a custom shortcut or false to disable it.
+Customize ReviewCommentBorder, ReviewCommentAuthor and ReviewCommentBody.
+
 ==============================================================================
 CONFIGURATION                                                  *review-setup*
 
 >lua
     require("review").setup({
       panel_width = 44,
+      inline_comments = false,
       keymaps = {
         comment = "<leader>rc",
         submit = "<leader>rs",
         refresh = "<leader>rr",
         info = "<leader>ri",
+        toggle_comments = "<leader>rt",
       }, -- false disables a mapping
       clone_protocol = "ssh",
       repo = nil,
