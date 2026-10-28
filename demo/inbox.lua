@@ -10,11 +10,13 @@ local function newest_first(left, right)
 end
 
 function M.filter(messages, options)
-  local query = options.query:lower()
+  options = options or {}
+  local query = (options.query or ""):lower()
   local matches = {}
 
   for _, message in ipairs(messages) do
-    if matches_query(message, query) then
+    local visible = not options.unread_only or not message.read
+    if visible and matches_query(message, query) then
       matches[#matches + 1] = message
     end
   end
