@@ -1,0 +1,106 @@
+*review.txt*   Commit-by-commit merge request review
+
+==============================================================================
+INTRODUCTION                                                     *review.nvim*
+
+review.nvim opens a GitLab merge request URL, lists its commits, and renders
+read-only inline diffs with selectable additions and deletions.
+Comment drafts are local until explicit publication.
+
+Requires Neovim 0.11+, git, and glab authenticated for the GitLab host.
+
+==============================================================================
+COMMANDS
+
+:Review [url]                                                       *:Review*
+    Open a merge request in a new tab. With no argument, prompt for its URL.
+
+:[range]ReviewComment                                        *:ReviewComment*
+    Draft a comment on the current diff line or a visual line selection.
+    Ctrl-S or :w in the comment editor saves locally. q cancels.
+
+:ReviewDrafts                                                *:ReviewDrafts*
+    Inspect, edit or delete local drafts.
+
+:ReviewThreads                                              *:ReviewThreads*
+    Read existing GitLab discussions for the current file.
+
+:ReviewRefresh                                              *:ReviewRefresh*
+    Reload the MR, commits, diffs and discussions in the existing tab.
+    Keep the selected commit and file when they still exist; otherwise open
+    the complete MR if the selected commit was replaced.
+    Preserve the cursor when the displayed Git revisions are unchanged.
+    Keep local drafts and their original positions.
+    A failed refresh leaves the previously loaded review available.
+    Also retries a failed initial load.
+
+:ReviewSubmit                                                *:ReviewSubmit*
+    Show the exact drafts, then request explicit publication.
+    If GitLab's diff refs changed, drafts remain local.
+
+:ReviewClose                                                  *:ReviewClose*
+    Close the review tab.
+
+==============================================================================
+MAPPINGS
+
+Panel: <CR> opens the selected commit or file.
+Diff: <leader>rc drafts a comment in normal or visual mode (configurable).
+Both: ]c/[c next/previous commit; ]f/[f next/previous file;
+      ]h/[h next/previous change block in the current file (counts supported);
+      gA complete MR; gd local drafts; gt discussions;
+      <leader>rr refresh the MR;
+      <leader>rs preview and submit drafts; q close.
+
+Opening a file focuses its first change block, opens any folds covering that
+line and centers the diff view there. A refresh keeps the previous cursor
+when the displayed Git revisions are unchanged.
+
+The sidebar colors follow the colorscheme. Shortcut hints remain in a muted
+footer while the tree scrolls. Customize ReviewHelp, ReviewCommit,
+ReviewDirectory, ReviewFileAdded/Modified/Deleted/Renamed and ReviewSelected.
+
+Ctrl-S in the comment editor saves a persistent local draft, exits insertion
+and closes the editor. Publication requires :ReviewSubmit.
+
+Deleted rows are real buffer lines. The buffer row number is not the original
+file line number: review.nvim maps selected rows to GitLab old/new positions.
+
+==============================================================================
+CONFIGURATION                                                  *review-setup*
+
+>lua
+    require("review").setup({
+      panel_width = 44,
+      keymaps = {
+        comment = "<leader>rc",
+        submit = "<leader>rs",
+        refresh = "<leader>rr",
+      }, -- false disables a mapping
+      clone_protocol = "ssh",
+      repo = nil,
+      cache_dir = vim.fn.stdpath("cache") .. "/review",
+      state_dir = vim.fn.stdpath("state") .. "/review",
+    })
+<
+
+An existing matching repository is used without switching branches.
+Otherwise the plugin fetches a bare repository into cache_dir.
+Local drafts are stored in state_dir/drafts/.
+
+==============================================================================
+COMMENT POSITIONS                                            *review-comments*
+
+Commit-view comments are mapped to the current MR diff, not posted as standalone
+commit comments. A line rewritten by a later commit must be selected again in
+the complete MR view (gA). Ranges must cover one contiguous side of the diff.
+GitLab does not accept comments outside its diff context.
+
+GitLab's discussion card can show up to 16 diff lines ending at the comment's
+last line. The range shown below the excerpt is the actual commented range.
+The discussion API does not expose a context-size option.
+
+If a publish request's outcome is unknown, automatic retry is blocked. Check
+GitLab and use :ReviewDrafts to explicitly allow retry or delete the draft.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

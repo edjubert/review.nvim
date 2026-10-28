@@ -1,0 +1,13 @@
+local M = {}
+function M.check()
+  vim.health.start("review.nvim")
+  if vim.fn.has("nvim-0.11") == 1 then vim.health.ok("Neovim >= 0.11")
+  else vim.health.error("Neovim >= 0.11 is required") end
+  for _, tool in ipairs({ "git", "glab" }) do
+    if vim.fn.executable(tool) == 1 then vim.health.ok(tool .. " found")
+    else vim.health.error(tool .. " is not in PATH") end
+  end
+  vim.health.info("Authenticate with glab auth login --hostname <your-gitlab-host>.")
+  vim.health.info("SSH cloning uses your existing Git credentials; no tokens are read from local files.")
+end
+return M
