@@ -1,3 +1,4 @@
+local emoji = require("review.emoji")
 local M = {}
 
 function M.root(discussion)
@@ -77,7 +78,7 @@ function M.document(discussions)
           local first = #lines + 1
           lines[#lines + 1] = ""
           lines[#lines + 1] = "### " .. ((note.author or {}).username or "unknown")
-          vim.list_extend(lines, vim.split(note.body or "", "\n", { plain = true }))
+          vim.list_extend(lines, vim.split(emoji.render(note.body or ""), "\n", { plain = true }))
           for index = first, #lines do comments[index] = note end
         end
       end

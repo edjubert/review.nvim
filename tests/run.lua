@@ -30,12 +30,38 @@ local git = require("review.git")
 local provider = require("review.providers.gitlab")
 local Session = require("review.session")
 local ui = require("review.ui")
+local emoji = require("review.emoji")
 local target = assert(url.parse("https://gitlab.example/group/nested/repo/-/merge_requests/12/commits?x=1"))
 local root = vim.fn.tempname()
 vim.fn.mkdir(root, "p")
 local config = { state_dir = root .. "/state", cache_dir = root .. "/cache", panel_width = 30 }
 local refs = { base_sha = "base", start_sha = "start", head_sha = "head" }
 local file = { old_path = "old.txt", new_path = "new.txt" }
+
+test("emoji shortcodes render Unicode sequences and aliases while keeping unknown names literal", function()
+  eq(emoji.render(":thinking: :question:\n:zero: :leftwards_arrow_with_hook: :question:"),
+    "🤔 ❓\n0️⃣ ↩️ ❓")
+  eq(emoji.render(":+1: :thumbsup: :-1: :e-mail: :woman_technologist: :fr:"),
+    "👍 👍 👎 📧 👩‍💻 🇫🇷")
+  eq(emoji.render(":smile::question: déjà 🙂 :unknown: :Thinking: :shipit: 12:34 https://example.com"),
+    "😄❓ déjà 🙂 :unknown: :Thinking: :shipit: 12:34 https://example.com")
+  eq(emoji.render(":unknown:thinking: :unknown::thinking:"), ":unknown:thinking: :unknown:🤔")
+end)
+
+test("emoji rendering respects escaped delimiters and Markdown code spans and fences", function()
+  for _, pair in ipairs({
+    { "\\:thinking: \\\\:thinking: \\`:thinking:\\`", "\\:thinking: \\\\🤔 \\`🤔\\`" },
+    { "`:thinking:` ```:question:`` :zero:``` :question:", "`:thinking:` ```:question:`` :zero:``` ❓" },
+    { "`:thinking:\n:question:` :zero:", "`:thinking:\n:question:` 0️⃣" },
+    { "` :thinking:", "` 🤔" },
+    { ":thinking:\n```lua\n:question:\n```\n:question:\n", "🤔\n```lua\n:question:\n```\n❓\n" },
+    { "~~~\n:thinking:\n~~~\n:question:", "~~~\n:thinking:\n~~~\n❓" },
+    { "  ````lua\n```\n~~~\n```` trailing\n:thinking:\n `````\n:question:",
+      "  ````lua\n```\n~~~\n```` trailing\n:thinking:\n `````\n❓" },
+    { ":thinking:\n```\n:question:", "🤔\n```\n:question:" },
+    { "```invalid`info :thinking:\n:question:", "```invalid`info 🤔\n❓" },
+  }) do eq(emoji.render(pair[1]), pair[2]) end
+end)
 
 test("nested MR URL, suffix and query", function()
   eq(target.project, "group/nested/repo")
@@ -225,11 +251,12 @@ test("Ctrl-S persists the draft and closes the editor without publication", func
   provider.post = function() calls = calls + 1 end
   local s = Session.new(target, config)
   local p = assert(position.build(refs, file, { { kind = "add", new_line = 4 } }))
-  local buf, win = ui.compose("Ctrl-S fixture", "", function(body) s:save_draft(body, p, "head") end)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Persist this draft" })
+  local body = "Persist this draft :thinking: :question:"
+  local buf, win = ui.compose("Ctrl-S fixture", body, function(text) s:save_draft(text, p, "head") end)
+  eq(vim.api.nvim_buf_get_lines(buf, 0, -1, false), { body })
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("i<C-s>", true, false, true), "xt", false)
   eq(#drafts.load(config, target), 1)
-  eq(drafts.load(config, target)[1].body, "Persist this draft")
+  eq(drafts.load(config, target)[1].body, body)
   eq(vim.api.nvim_win_is_valid(win), false)
   eq(calls, 0)
   provider.post = original
@@ -541,6 +568,41 @@ test("inline discussion ranges anchor on added and deleted lines with all replie
   s:close()
 end)
 
+test("inline and full discussions render emoji without changing messages or diff positions", function()
+  local s = inline_fixture({ inline_comments = true })
+  local discussion = s.data.discussions[1]
+  discussion.notes[1].body = ":thinking: :question:\n\n:zero: :leftwards_arrow_with_hook: :question:"
+  discussion.notes[3].body = ":thumbsup: `:question:` :unknown:"
+  s.data.discussions = { discussion }
+  local before = vim.deepcopy(discussion)
+  local buffer_lines = vim.api.nvim_buf_get_lines(s.viewer_buf, 0, -1, false)
+  local rows = vim.deepcopy(s.current.rows)
+  local threads = require("review.threads")
+  local anchor = threads.anchor(discussion, s.current)
+  ui.comments(s)
+  local marks = comment_marks(s)
+  eq(#marks, 1); eq(marks[1][2], 4)
+  local inline = virtual_text(marks[1])
+  assert(inline:find("🤔 ❓", 1, true))
+  assert(inline:find("0️⃣ ↩️ ❓", 1, true))
+  assert(inline:find("👍 `:question:` :unknown:", 1, true))
+  local lines, entries, comments = threads.document(s.data.discussions)
+  local document = table.concat(lines, "\n")
+  assert(document:find("🤔 ❓\n\n0️⃣ ↩️ ❓", 1, true))
+  assert(document:find("👍 `:question:` :unknown:", 1, true))
+  for index, line in ipairs(lines) do
+    eq(entries[index], discussion)
+    if line == "🤔 ❓" or line == "0️⃣ ↩️ ❓" then eq(comments[index], discussion.notes[1]) end
+    if line == "👍 `:question:` :unknown:" then eq(comments[index], discussion.notes[3]) end
+  end
+  eq(discussion, before)
+  eq(vim.api.nvim_buf_get_lines(s.viewer_buf, 0, -1, false), buffer_lines)
+  eq(s.current.rows, rows)
+  eq(threads.anchor(discussion, s.current), anchor)
+  eq(threads.row(discussion, s.current), 5)
+  s:close()
+end)
+
 test("inline toggle keeps buffer positions, cursor, local drafts and transports unchanged", function()
   local review = require("review")
   local before = review.session
@@ -607,7 +669,7 @@ end)
 
 test("inline discussions wrap Unicode text and reflow on window resize", function()
   local s = inline_fixture({ inline_comments = true })
-  local body = string.rep("é🙂界 long-word ", 8) .. "\tend"
+  local body = string.rep("é🙂界 long-word :thinking: :zero: ", 8) .. "\tend"
   s.data.discussions = { s.data.discussions[1] }
   s.data.discussions[1].notes = { s.data.discussions[1].notes[1] }
   s.data.discussions[1].notes[1].body = body
@@ -625,7 +687,7 @@ test("inline discussions wrap Unicode text and reflow on window resize", functio
       end
       assert(vim.fn.strdisplaywidth(text) <= vim.api.nvim_win_get_width(s.viewer_win))
     end
-    eq(table.concat(parts), body:gsub("\t", "    "))
+    eq(table.concat(parts), emoji.render(body):gsub("\t", "    "))
     counts[#counts + 1] = #marks[1][4].virt_lines
   end
   assert(counts[1] > counts[2])
@@ -1166,8 +1228,9 @@ end)
 test("explicit submission previews reply context and publishes to the selected thread only", function()
   local s = reply_fixture()
   local reply = assert(provider.reply_target(s.data.discussions[1]))
-  reply.author, reply.body = "alice", "Original comment"
-  s.drafts = { drafts.new("My reply", vim.tbl_extend("force",
+  reply.author, reply.body = "alice", "Original comment :thinking:"
+  local body = "My reply :question:"
+  s.drafts = { drafts.new(body, vim.tbl_extend("force",
     vim.deepcopy(s.data.discussions[1].notes[1].position), refs), "head", nil, reply) }
   drafts.save(s.config, s.target, s.drafts)
   local requests, choice, preview = {}, 1
@@ -1186,13 +1249,13 @@ test("explicit submission previews reply context and publishes to the selected t
   }, function()
     s:submit()
     eq(#requests, 0); eq(#s.drafts, 1)
-    assert(preview:find("Reply to @alice", 1, true) and preview:find("> Original comment", 1, true))
-    assert(preview:find("My reply", 1, true))
+    assert(preview:find("Reply to @alice", 1, true) and preview:find("> Original comment :thinking:", 1, true))
+    assert(preview:find(body, 1, true))
     choice = 2
     s:submit()
     eq(#requests, 2)
     eq(requests[2].endpoint, provider.mr_path(target) .. "/discussions/new/notes")
-    eq(requests[2].body, { body = "My reply" })
+    eq(requests[2].body, { body = body })
     eq(#s.drafts, 0); eq(#drafts.load(s.config, s.target), 0)
   end)
   s:close()

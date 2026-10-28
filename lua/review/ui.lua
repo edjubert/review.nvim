@@ -1,4 +1,5 @@
 local threads = require("review.threads")
+local emoji = require("review.emoji")
 local M = {}
 local namespace = vim.api.nvim_create_namespace("review")
 local comment_namespace = vim.api.nvim_create_namespace("review.comments")
@@ -421,7 +422,7 @@ local function inline_discussion(session, discussion)
         append("  │  ", "", "ReviewCommentBody")
         append("  │  ", author, "ReviewCommentAuthor")
       end
-      for _, text in ipairs(vim.split(note.body or "", "\n", { plain = true })) do
+      for _, text in ipairs(vim.split(emoji.render(note.body or ""), "\n", { plain = true })) do
         append("  │  ", text, "ReviewCommentBody")
       end
     end

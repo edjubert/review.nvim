@@ -266,6 +266,13 @@ unchanged lines; ranges must remain contiguous and unchanged.
 Use `gT` in the panel or diff, or `:ReviewThreads`, to read all discussions across
 the MR/PR, including comments without a file position.
 
+Discussion messages and replies display emoji shortcodes such as `:thinking:`
+and `:question:` as 🤔 and ❓, both inline and in the discussion window.
+The bundled [gemoji](https://github.com/github/gemoji) Unicode catalogue works
+offline. Unknown shortcodes, escaped shortcodes, Markdown code spans and fenced
+code blocks stay literal. Draft editing and submission previews keep the
+original text.
+
 ![Discussion window with two participants and a comment anchored to a line range](assets/screenshots/discussion.png)
 
 In the discussion window:

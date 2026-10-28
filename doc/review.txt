@@ -126,6 +126,12 @@ In commit views, current-review discussions are mapped to unchanged lines;
 comment ranges must remain contiguous and unchanged.
 gT or :ReviewThreads opens all discussions, including general comments.
 
+Messages and replies render emoji shortcodes such as :thinking: and :question:
+as Unicode emoji, inline and in the discussion window. The bundled gemoji
+catalogue needs no network access. Unknown or escaped shortcodes, Markdown code
+spans and fenced code blocks stay literal. Draft editors and submission
+previews preserve the original text.
+
 In the discussion window, j/k moves through the text, Enter jumps to the
 discussion's file and comment line, and q closes the window.
 <leader>ro or :ReviewOpenComment opens the comment or reply under the cursor
