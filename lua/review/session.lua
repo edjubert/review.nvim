@@ -372,6 +372,24 @@ function Session:show_drafts()
   end)
 end
 
+function Session:show_info()
+  if not ui.valid(self) then return end
+  if not self.data then
+    notify("The review metadata is not loaded yet.", vim.log.levels.WARN)
+    return
+  end
+  local review = self.data.mr
+  local title = type(review.title) == "string" and review.title:gsub("[\r\n]", " ") or "Untitled review"
+  local description = type(review.description) == "string" and review.description or ""
+  local lines = { "# " .. title, "", "## Description", "" }
+  if vim.trim(description) == "" then
+    lines[#lines + 1] = "No description provided."
+  else
+    vim.list_extend(lines, vim.split(description:gsub("\r\n", "\n"), "\n", { plain = true }))
+  end
+  ui.document(("%s %s%d · q: close"):format(self.provider.name, self.provider.prefix, self.target.iid), lines)
+end
+
 function Session:show_thread_at_cursor()
   if not self.data or not self.current or not self.current.rows
       or vim.api.nvim_get_current_buf() ~= self.viewer_buf then

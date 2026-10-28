@@ -4,14 +4,15 @@
 
 # review.nvim
 
-Repository: [edjubert/review.nvim](https://github.com/edjubert/review.nvim).
-
 Read GitLab merge requests and GitHub or Codeberg pull requests commit by commit,
 view each file as an inline diff, and draft comments on a line or a line range
 in Neovim.
 
+![Complete pull request with the commit panel, inline Lua diff and local draft markers](assets/screenshots/overview.png)
+
 - Open a GitLab MR, GitHub PR or Codeberg PR URL, including commit/file subpages.
 - Browse the exact commit list, oldest first.
+- Read the MR/PR title and Markdown description.
 - Switch between individual commits and the complete MR/PR.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
@@ -26,6 +27,10 @@ in Neovim.
 The URL selects the provider automatically. GitLab, self-hosted GitLab, GitHub,
 GitHub Enterprise Server and Codeberg use the same UI and shortcuts.
 Provider code lives in `lua/review/providers/`.
+
+The screenshots use a demo GitHub pull request; the discussion is simulated
+locally. Colors, Markdown rendering and selection menus come from the user's
+Neovim configuration.
 
 ## Requirements
 
@@ -96,7 +101,7 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewComment", "ReviewDrafts",
+    "Review", "ReviewInfo", "ReviewComment", "ReviewDrafts",
     "ReviewThreads", "ReviewRefresh", "ReviewSubmit", "ReviewClose",
   },
   opts = {},
@@ -125,6 +130,8 @@ Or use `:Review` to enter one URL interactively. A new tab contains the commit/f
 panel on the left and the inline diff on the right. The first commit opens
 automatically. The panel also has a complete MR/PR entry.
 
+![A single commit expanded to show its changed files and inline diff](assets/screenshots/commit-navigation.png)
+
 No checkout is needed. When Neovim's current repository matches the URL, the
 plugin fetches the MR/PR head ref into `refs/review/<number>/head` in that repository. It
 does not switch branches or change working files. Otherwise it fetches into a
@@ -139,6 +146,7 @@ merge base.
 | Command | Action |
 | --- | --- |
 | `:Review [url]` | Open a GitLab MR, GitHub PR or Codeberg PR |
+| `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewComment` | Compose a local draft on the current line |
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
 | `:ReviewDrafts` | Inspect, edit or delete local drafts |
@@ -160,6 +168,7 @@ merge base.
 | `<leader>rc` in the diff, normal or visual mode | Comment on the line / range |
 | `<leader>rs` in the panel or diff | Preview drafts and choose whether to publish |
 | `<leader>rr` in the panel or diff | Refresh the review |
+| `<leader>ri` in the panel or diff | Show the MR/PR title and description |
 | `gd` | Local drafts |
 | `gt` in the diff | Open discussions attached to the cursor line or range |
 | `gT` | Open all discussions in the MR/PR |
@@ -175,6 +184,19 @@ Highlight groups such as `ReviewHelp`, `ReviewDirectory`, `ReviewFileAdded`,
 form one block; navigation stays within the current file. Use `]f` for the next file.
 Opening a file automatically places the cursor on its first change block,
 opens any folds covering that line, and centers the diff view there.
+
+### Review title and description
+
+Run `:ReviewInfo` or press `<leader>ri` in the panel or diff to read the review's
+title and description in a read-only Markdown window. Press `q` to close it.
+An empty description displays "No description provided."
+
+![ReviewInfo displaying the pull request title and Markdown description](assets/screenshots/review-info.png)
+
+The window uses the loaded review metadata. Run `:ReviewRefresh` to retrieve
+changes made to the title or description since the review was opened.
+Configure `keymaps.info` to change the shortcut, or set it to `false` to disable
+the mapping while keeping `:ReviewInfo` available.
 
 ### Refresh a review
 
@@ -198,6 +220,8 @@ loaded review available, and the command can also retry a failed initial load.
 6. Press `<leader>rs` or run `:ReviewSubmit`, inspect the preview, then explicitly
    select publication.
 
+![Markdown comment editor for a line range, with the local-save shortcut in its title](assets/screenshots/range-comment.png)
+
 Creating, saving or opening a draft never posts it to the provider.
 `Ctrl-S` writes the draft to disk, exits insertion and closes the comment editor.
 The draft remains available after a restart; publication requires `:ReviewSubmit`.
@@ -209,6 +233,20 @@ It records each successful post before proceeding to the next comment.
 If a request's outcome is uncertain, it blocks automatic retry: inspect the provider
 and use `:ReviewDrafts` to delete the draft or authorize a retry.
 
+### Manage local drafts
+
+Run `:ReviewDrafts` or press `gd` to select a saved draft, then choose
+`Edit locally` or `Delete locally`.
+
+![Local draft selector showing comment locations and message previews](assets/screenshots/local-drafts.png)
+
+### Preview before publication
+
+`:ReviewSubmit` opens a preview and asks whether to keep the drafts local or
+publish them. Choose `Keep local` to retain them without posting.
+
+![Submission preview with the explicit Keep local or Publish confirmation](assets/screenshots/submission-preview.png)
+
 ### Browse discussions
 
 Use `gt` on a commented diff line to open its discussion. For a range comment,
@@ -217,7 +255,11 @@ open together. In commit views, current-review discussions are mapped onto
 unchanged lines; ranges must remain contiguous and unchanged.
 
 Use `gT` in the panel or diff, or `:ReviewThreads`, to read all discussions across
-the MR/PR, including comments without a file position. In the discussion window:
+the MR/PR, including comments without a file position.
+
+![Discussion window with two participants and a comment anchored to a line range](assets/screenshots/discussion.png)
+
+In the discussion window:
 
 | Mapping | Action |
 | --- | --- |
@@ -277,6 +319,7 @@ require("review").setup({
     comment = "<leader>rc", -- normal/visual; false disables this mapping
     submit = "<leader>rs",  -- normal, panel/diff; false disables this mapping
     refresh = "<leader>rr", -- normal, panel/diff; false disables this mapping
+    info = "<leader>ri",    -- normal, panel/diff; false disables this mapping
   },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected

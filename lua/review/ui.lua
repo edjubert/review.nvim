@@ -69,6 +69,12 @@ function M.refresh_key(session)
   return key
 end
 
+function M.info_key(session)
+  local key = (session.config.keymaps or {}).info
+  if key == nil then return "<leader>ri" end
+  return key
+end
+
 function M.bind(session, buf)
   local maps = {
     ["]c"] = function() session:move_commit(1) end,
@@ -95,6 +101,11 @@ function M.bind(session, buf)
   if refresh_key then
     vim.keymap.set("n", refresh_key, function() session:refresh() end,
       { buffer = buf, silent = true, desc = "Refresh the review" })
+  end
+  local info_key = M.info_key(session)
+  if info_key then
+    vim.keymap.set("n", info_key, function() session:show_info() end,
+      { buffer = buf, silent = true, desc = "Show the MR/PR title and description" })
   end
 end
 
@@ -162,7 +173,7 @@ local function footer_hints(session)
     " ]c/[c commits · ]f/[f files",
     " ]h/[h next/previous change",
     " gt thread here · gT all threads",
-    " gd local drafts",
+    " gd drafts · " .. (M.info_key(session) or ":ReviewInfo") .. " info",
     " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh " .. session.provider.kind,
     " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
   }

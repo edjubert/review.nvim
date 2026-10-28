@@ -57,6 +57,7 @@ local function with_refs(target, pr)
   if type(base) ~= "string" then error("GitHub did not provide the PR merge base.", 0) end
   -- The shared session stores provider-neutral references in this shape.
   pr.diff_refs = { base_sha = base, head_sha = pr.head.sha, start_sha = pr.base.sha }
+  pr.description = type(pr.body) == "string" and pr.body or ""
   return pr, comparison
 end
 

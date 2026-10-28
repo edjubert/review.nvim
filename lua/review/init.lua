@@ -1,7 +1,7 @@
 local M = {}
 local defaults = {
   panel_width = 44,
-  keymaps = { comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr" },
+  keymaps = { comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr", info = "<leader>ri" },
   clone_protocol = "ssh",
   repo = nil,
   cache_dir = vim.fn.stdpath("cache") .. "/review",
@@ -12,7 +12,7 @@ M.config = vim.deepcopy(defaults)
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
-  for _, name in ipairs({ "comment", "submit", "refresh" }) do
+  for _, name in ipairs({ "comment", "submit", "refresh", "info" }) do
     assert(type(M.config.keymaps[name]) == "string" or M.config.keymaps[name] == false,
       "keymaps." .. name .. " must be a mapping string or false")
   end
@@ -61,9 +61,19 @@ function M.refresh()
   M.session:refresh()
 end
 
+function M.info()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:show_info()
+end
+
 function M._commands()
   vim.api.nvim_create_user_command("Review", function(args) M.open(args.args) end,
     { nargs = "?", desc = "Open a GitLab MR, GitHub PR or Codeberg PR URL" })
+  vim.api.nvim_create_user_command("ReviewInfo", M.info,
+    { desc = "Show the MR/PR title and description" })
   vim.api.nvim_create_user_command("ReviewComment", function(args) M.comment(args.line1, args.line2) end,
     { range = true, desc = "Create a local comment draft on a line or range" })
   vim.api.nvim_create_user_command("ReviewDrafts", function() if M.session then M.session:show_drafts() end end,

@@ -34,6 +34,11 @@ COMMANDS
     argument, prompt for its URL. The URL selects the provider automatically.
     Codeberg URLs use https://codeberg.org/owner/repo/pulls/123.
 
+:ReviewInfo                                                     *:ReviewInfo*
+    Show the loaded MR/PR title and description in a read-only Markdown
+    window. q closes it. Empty descriptions display "No description provided."
+    Use :ReviewRefresh to retrieve updated metadata.
+
 :[range]ReviewComment                                        *:ReviewComment*
     Draft a comment on the current diff line or a visual line selection.
     Ctrl-S or :w in the comment editor saves locally. q cancels.
@@ -74,6 +79,7 @@ Both: ]c/[c next/previous commit; ]f/[f next/previous file;
       gA complete MR/PR; gd local drafts;
       gt discussion under the cursor (diff only); gT all discussions;
       <leader>rr refresh the review;
+      <leader>ri show the MR/PR title and description;
       <leader>rs preview and submit drafts; q close.
 
 Opening a file focuses its first change block, opens any folds covering that
@@ -120,6 +126,7 @@ CONFIGURATION                                                  *review-setup*
         comment = "<leader>rc",
         submit = "<leader>rs",
         refresh = "<leader>rr",
+        info = "<leader>ri",
       }, -- false disables a mapping
       clone_protocol = "ssh",
       repo = nil,

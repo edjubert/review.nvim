@@ -139,6 +139,7 @@ function M.current(target)
     error("Codeberg did not provide valid PR references or its merge base. Run :ReviewRefresh.", 0)
   end
   pr.diff_refs = { base_sha = pr.merge_base, head_sha = pr.head.sha, start_sha = pr.base.sha }
+  pr.description = type(pr.body) == "string" and pr.body or ""
   return pr
 end
 
