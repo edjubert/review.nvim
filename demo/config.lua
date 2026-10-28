@@ -1,5 +1,5 @@
 return {
   query = "",
-  sort = "newest",
+  unread_only = false,
   page_size = 20,
 }

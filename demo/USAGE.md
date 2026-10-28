@@ -10,12 +10,16 @@ Each message contains a `subject`, a `read` flag and a `received_at` timestamp.
 
 ```lua
 local inbox = require("demo.inbox")
-local matches = inbox.filter(messages, { query = "release" })
+local matches = inbox.filter(messages, {
+  query = "release",
+  unread_only = true,
+})
 ```
 
 Search is case-insensitive and matches part of a subject.
 Results are ordered by their received timestamp, newest first.
 Filtering leaves the input collection unchanged.
+Omit `query` to show every subject, or `unread_only` to include read messages.
 
 ## Summary
 
