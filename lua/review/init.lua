@@ -69,7 +69,7 @@ function M._commands()
   vim.api.nvim_create_user_command("ReviewDrafts", function() if M.session then M.session:show_drafts() end end,
     { desc = "Inspect, edit or delete local drafts" })
   vim.api.nvim_create_user_command("ReviewThreads", function() if M.session then M.session:show_threads() end end,
-    { desc = "Read existing review discussions" })
+    { desc = "Read all review discussions and jump to comment lines" })
   vim.api.nvim_create_user_command("ReviewRefresh", M.refresh,
     { desc = "Reload the open review, commits, diffs and discussions" })
   vim.api.nvim_create_user_command("ReviewSubmit", function() if M.session then M.session:submit() end end,

@@ -4,6 +4,7 @@ local git = require("review.git")
 local diff = require("review.diff")
 local position = require("review.position")
 local drafts = require("review.drafts")
+local threads = require("review.threads")
 local ui = require("review.ui")
 local Session = {}
 Session.__index = Session
@@ -128,8 +129,14 @@ function Session:select_commit(index, selection)
     ui.panel(self)
     local file_index = 1
     if selection and selection.path then
+      local found = false
       for i, file in ipairs(files) do
-        if file.new_path == selection.path then file_index = i; break end
+        if file.new_path == selection.path then file_index, found = i, true; break end
+      end
+      if selection.require_path and not found then
+        ui.empty(self, "The commented file is not part of this comparison.")
+        notify("The commented file is not part of this comparison.", vim.log.levels.WARN)
+        return
       end
     end
     if #files > 0 then self:select_file(file_index, selection)
@@ -150,12 +157,21 @@ function Session:select_file(index, selection)
     local new = file.deleted_file and "" or git.content(self.repo, head, file.new_path)
     local rows, err = diff.build(old, new)
     if generation ~= self.generation or self.closed then return end
-    self.current = { file = file, base = base, head = head, old = old, new = new, rows = rows, error = err }
+    local current = { file = file, base = base, head = head, old = old, new = new, rows = rows, error = err }
+    if rows then self:map_threads(current, generation) end
+    if generation ~= self.generation or self.closed then return end
+    self.current = current
     ui.render(self, self.current)
     if not ui.valid(self) then return end
     if rows and vim.api.nvim_win_is_valid(self.viewer_win) then
       local cursor = { diff.hunk_starts(rows)[1] or 1, 0 }
-      if selection and selection.cursor and #rows > 0
+      if selection and selection.focus_line then
+        local target, found = selection.focus_line, false
+        for line, row in ipairs(rows) do
+          if row[target.side .. "_line"] == target.line then cursor, found = { line, 0 }, true; break end
+        end
+        if not found then notify("The comment's line is unavailable in this diff.", vim.log.levels.WARN) end
+      elseif selection and selection.cursor and #rows > 0
           and selection.path == file.new_path and selection.base == base and selection.head == head then
         local line = math.min(selection.cursor[1], #rows)
         cursor = { line, math.min(selection.cursor[2], math.max(0, #rows[line].text - 1)) }
@@ -169,6 +185,61 @@ function Session:select_file(index, selection)
       vim.api.nvim_set_current_win(self.panel_win)
     end
   end, nil, generation)
+end
+
+-- Map current-review discussions into a commit snapshot using unchanged lines.
+-- Historical refs are fetched only on an explicit jump, never while rendering.
+function Session:map_threads(current, generation)
+  current.thread_anchors = {}
+  local refs, maps, renames = self.data.mr.diff_refs, {}, {}
+  local function destination_path(anchor, source, destination)
+    local paths = renames[anchor.side]
+    if paths == nil then
+      local ok, files = pcall(git.files, self.repo, source, destination)
+      paths = ok and {} or false
+      if ok then
+        for _, file in ipairs(files) do paths[file.old_path] = not file.deleted_file and file.new_path or false end
+      end
+      renames[anchor.side] = paths
+    end
+    if not paths then return nil end
+    local path = paths[anchor.path]
+    return path == nil and anchor.path or path
+  end
+  for _, discussion in ipairs(self.data.discussions) do
+    local anchor = threads.anchor(discussion)
+    if anchor then
+      local old = anchor.side == "old"
+      local source = old and refs.base_sha or refs.head_sha
+      local destination = old and current.base or current.head
+      local path = old and current.file.old_path or current.file.new_path
+      if anchor.sha == source and source ~= destination then
+        local key = anchor.side .. "\0" .. anchor.path
+        if maps[key] == nil then
+          local ok, map = pcall(function()
+            if destination_path(anchor, source, destination) ~= path then return false end
+            local original = git.content(self.repo, source, anchor.path)
+            return diff.line_map(original, old and current.old or current.new)
+          end)
+          if generation ~= self.generation or self.closed then return end
+          maps[key] = ok and map or false
+        end
+        local map = maps[key]
+        local first = map and map[anchor.first]
+        local valid = first and anchor.first <= anchor.last and anchor.last - anchor.first < #current.rows
+        if valid then
+          for line = anchor.first, anchor.last do
+            if map[line] ~= first + line - anchor.first then valid = false; break end
+          end
+        end
+        if valid then
+          current.thread_anchors[discussion] = vim.tbl_extend("force", anchor, {
+            sha = destination, path = path, first = first, last = map[anchor.last],
+          })
+        end
+      end
+    end
+  end
 end
 
 function Session:move_commit(delta)
@@ -301,27 +372,94 @@ function Session:show_drafts()
   end)
 end
 
-function Session:show_threads()
-  if not self.data then return end
-  local file = self.current and self.current.file
-  local lines = {}
-  for _, discussion in ipairs(self.data.discussions) do
-    local first = discussion.notes and discussion.notes[1]
-    local p = first and type(first.position) == "table" and first.position or nil
-    if first and (not file or (p and (p.new_path == file.new_path or p.old_path == file.old_path))) then
-      lines[#lines + 1] = "## " .. (first.resolved and "Resolved" or first.outdated and "Outdated discussion" or "Discussion")
-      if p then lines[#lines + 1] = (p.new_path or p.old_path) .. ":" .. (p.new_line or p.old_line or "?") end
-      for _, note in ipairs(discussion.notes) do
-        if not note.system then
-          lines[#lines + 1] = ""
-          lines[#lines + 1] = "### " .. ((note.author or {}).username or "unknown")
-          vim.list_extend(lines, vim.split(note.body or "", "\n", { plain = true }))
-        end
-      end
-      lines[#lines + 1] = ""
-    end
+function Session:show_thread_at_cursor()
+  if not self.data or not self.current or not self.current.rows
+      or vim.api.nvim_get_current_buf() ~= self.viewer_buf then
+    notify("Use gt on a review diff line; gT opens all discussions.", vim.log.levels.WARN)
+    return
   end
-  ui.document(self.provider.name .. " discussions", lines)
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local selected = {}
+  for _, discussion in ipairs(self.data.discussions) do
+    if threads.contains(discussion, self.current, row) then selected[#selected + 1] = discussion end
+  end
+  if #selected == 0 then
+    notify("No discussion on this line. Use gT to see all discussions.")
+    return
+  end
+  self:show_threads(selected, "Discussion under cursor")
+end
+
+function Session:show_threads(discussions, title)
+  if not self.data or not ui.valid(self) then return end
+  local lines, entries = threads.document(discussions or self.data.discussions)
+  ui.document((title or (self.provider.name .. " discussions")) .. " · Enter: line · q: close", lines, {
+    empty = "No discussions in this review.",
+    entries = entries,
+    on_select = function(discussion, close) self:jump_thread(discussion, close) end,
+  })
+end
+
+function Session:jump_thread(discussion, close)
+  if not self.ready or not ui.valid(self) or not vim.api.nvim_win_is_valid(self.viewer_win) then return end
+  if self.refreshing then notify("Wait for the review refresh to finish.", vim.log.levels.WARN); return end
+  local anchor = threads.anchor(discussion)
+  if not anchor then
+    notify("This discussion has no file line to jump to.")
+    return
+  end
+  local function focus(row)
+    if close and close() == false then return end
+    vim.api.nvim_set_current_win(self.viewer_win)
+    vim.api.nvim_win_set_cursor(self.viewer_win, { row, 0 })
+    vim.cmd.normal({ args = { "zvzz" }, bang = true })
+  end
+  local row = threads.row(discussion, self.current)
+  if row then focus(row); return end
+  if type(anchor.sha) ~= "string" or not anchor.sha:match("^%x+$") then
+    notify("The provider did not expose this comment's diff revision; its line cannot be located safely.",
+      vim.log.levels.WARN)
+    return
+  end
+  local generation, refs = self.generation, self.data.mr.diff_refs
+  local function active()
+    return generation == self.generation and ui.valid(self) and vim.api.nvim_win_is_valid(self.viewer_win)
+  end
+  self:task(function()
+    local destination_sha = anchor.side == "old" and refs.base_sha or refs.head_sha
+    git.ensure(self.repo, anchor.sha, self.data.project, self.config)
+    if not active() then return end
+    local path = git.rename_path(self.repo, anchor.sha, destination_sha, anchor.path)
+    if not active() then return end
+    if not path then
+      notify("The commented file was deleted. The discussion remains readable here.", vim.log.levels.WARN)
+      return
+    end
+    local line = anchor.last
+    if anchor.sha ~= destination_sha then
+      local original = git.content(self.repo, anchor.sha, anchor.path)
+      local current = git.content(self.repo, destination_sha, path)
+      if not active() then return end
+      line = diff.line_map(original, current)[anchor.last]
+      if not line then
+        notify("The commented line was rewritten or removed. The discussion remains readable here.", vim.log.levels.WARN)
+        return
+      end
+    end
+    local file
+    for _, candidate in ipairs(git.files(self.repo, refs.base_sha, refs.head_sha)) do
+      if candidate[anchor.side == "old" and "old_path" or "new_path"] == path then file = candidate; break end
+    end
+    if not active() then return end
+    if not file then
+      notify("The commented file is no longer part of the review diff.", vim.log.levels.WARN)
+      return
+    end
+    if close and close() == false then return end
+    self:select_commit(0, {
+      path = file.new_path, require_path = true, focus_line = { side = anchor.side, line = line },
+    })
+  end, nil, generation)
 end
 
 function Session:submit()
@@ -387,6 +525,7 @@ function Session:submit()
         end
         self.submitting = false
         self.data.discussions = self.provider.discussions(self.target, self.data.mr.diff_refs, self.data.diffs)
+        if self.current and self.current.rows then self:map_threads(self.current, self.generation) end
         ui.panel(self)
         ui.comments(self)
         notify(("Published %d comment(s)."):format(count))

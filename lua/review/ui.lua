@@ -1,3 +1,4 @@
+local threads = require("review.threads")
 local M = {}
 local namespace = vim.api.nvim_create_namespace("review")
 local comment_namespace = vim.api.nvim_create_namespace("review.comments")
@@ -78,7 +79,8 @@ function M.bind(session, buf)
     ["[h"] = function() session:move_hunk(-1, vim.v.count1) end,
     ["gA"] = function() session:select_commit(0) end,
     ["gd"] = function() session:show_drafts() end,
-    ["gt"] = function() session:show_threads() end,
+    ["gt"] = function() session:show_thread_at_cursor() end,
+    ["gT"] = function() session:show_threads() end,
     ["q"] = function() session:close() end,
   }
   for key, callback in pairs(maps) do
@@ -159,7 +161,8 @@ local function footer_hints(session)
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
     " ]c/[c commits · ]f/[f files",
     " ]h/[h next/previous change",
-    " gd drafts · gt discussions",
+    " gt thread here · gT all threads",
+    " gd local drafts",
     " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh " .. session.provider.kind,
     " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
   }
@@ -337,10 +340,10 @@ function M.comments(session)
     end
   end
   for _, discussion in ipairs(session.data and session.data.discussions or {}) do
-    local first = discussion.notes and discussion.notes[1]
-    local p = first and first.position
-    if p and p ~= vim.NIL and p.new_path == current.file.new_path and p.head_sha == current.head then
-      mark(p.base_sha == current.base and p.old_line or nil, p.new_line, "discussion (gt)")
+    local row = threads.row(discussion, current)
+    if row then
+      labels[row] = labels[row] or {}
+      labels[row][#labels[row] + 1] = "discussion (gt)"
     end
   end
   for row, texts in pairs(labels) do
@@ -398,8 +401,22 @@ function M.compose(title, body, saved)
   return buf, win
 end
 
-function M.document(title, lines)
-  return float(title, #lines > 0 and lines or { "No discussions on this file." }, false)
+function M.document(title, lines, opts)
+  opts = opts or {}
+  local buf, win = float(title, #lines > 0 and lines or { opts.empty or "Nothing to display." }, false)
+  if opts.on_select then
+    vim.wo[win].cursorline = true
+    local function close()
+      if not vim.api.nvim_win_is_valid(win) then return false end
+      vim.api.nvim_win_close(win, true)
+      return true
+    end
+    vim.keymap.set("n", "<CR>", function()
+      local entry = (opts.entries or {})[vim.api.nvim_win_get_cursor(win)[1]]
+      if entry then opts.on_select(entry, close) end
+    end, { buffer = buf, silent = true, desc = "Jump to the comment line" })
+  end
+  return buf, win
 end
 
 return M

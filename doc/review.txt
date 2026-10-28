@@ -42,7 +42,8 @@ COMMANDS
     Inspect, edit or delete local drafts.
 
 :ReviewThreads                                              *:ReviewThreads*
-    Read existing review discussions for the current file.
+    Read all discussions across the MR/PR.
+    Enter on a discussion jumps to its comment line; q closes the window.
 
 :ReviewRefresh                                              *:ReviewRefresh*
     Reload the MR/PR, commits, diffs and discussions in the existing tab.
@@ -70,7 +71,8 @@ Panel: <CR> opens the selected commit or file.
 Diff: <leader>rc drafts a comment in normal or visual mode (configurable).
 Both: ]c/[c next/previous commit; ]f/[f next/previous file;
       ]h/[h next/previous change block in the current file (counts supported);
-      gA complete MR/PR; gd local drafts; gt discussions;
+      gA complete MR/PR; gd local drafts;
+      gt discussion under the cursor (diff only); gT all discussions;
       <leader>rr refresh the review;
       <leader>rs preview and submit drafts; q close.
 
@@ -87,6 +89,26 @@ and closes the editor. Publication requires :ReviewSubmit.
 
 Deleted rows are real buffer lines. The buffer row number is not the original
 file line number: review.nvim maps selected rows to provider old/new positions.
+
+==============================================================================
+DISCUSSION NAVIGATION                                        *review-threads*
+
+gt opens discussions attached to the cursor's diff line. Any line inside a
+commented range works. Several discussions on the same line open together.
+In commit views, current-review discussions are mapped to unchanged lines;
+comment ranges must remain contiguous and unchanged.
+gT or :ReviewThreads opens all discussions, including general comments.
+
+In the discussion window, j/k moves through the text, Enter jumps to the
+discussion's file and comment line, and q closes the window.
+Enter works from headings, locations, messages and replies.
+The jump focuses the appropriate old/new side, opens folds and centers the
+cursor. When needed, it opens the complete MR/PR comparison.
+
+Older comments are mapped to the current review only when their line is
+unchanged. If the line was rewritten/deleted, the file is no longer in the
+review diff, or its original revision is unavailable, the discussion stays
+open with an explanatory message. General comments have no line to jump to.
 
 ==============================================================================
 CONFIGURATION                                                  *review-setup*

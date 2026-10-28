@@ -19,7 +19,8 @@ in Neovim.
 - Save, edit and delete persistent local comment drafts.
 - Preview and explicitly publish drafts as inline discussions on GitLab, GitHub
   or Codeberg.
-- Read existing discussions for the current file.
+- Open the discussion under the cursor or browse all review discussions.
+- Jump from a discussion to its commented line.
 - Refresh the open review without losing local drafts.
 
 The URL selects the provider automatically. GitLab, self-hosted GitLab, GitHub,
@@ -141,7 +142,7 @@ merge base.
 | `:ReviewComment` | Compose a local draft on the current line |
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
 | `:ReviewDrafts` | Inspect, edit or delete local drafts |
-| `:ReviewThreads` | Read existing discussions |
+| `:ReviewThreads` | Read all discussions and jump to their comment lines |
 | `:ReviewRefresh` | Reload the review, commits, diffs and discussions |
 | `:ReviewSubmit` | Preview drafts and choose whether to publish |
 | `:ReviewClose` | Close the review tab |
@@ -160,7 +161,8 @@ merge base.
 | `<leader>rs` in the panel or diff | Preview drafts and choose whether to publish |
 | `<leader>rr` in the panel or diff | Refresh the review |
 | `gd` | Local drafts |
-| `gt` | Existing discussions |
+| `gt` in the diff | Open discussions attached to the cursor line or range |
+| `gT` | Open all discussions in the MR/PR |
 | `q` | Close the review tab |
 
 The panel uses your colorscheme for commits, directories and Git file statuses.
@@ -206,6 +208,32 @@ draft. If the MR/PR changed, it preserves the draft and asks for an updated posi
 It records each successful post before proceeding to the next comment.
 If a request's outcome is uncertain, it blocks automatic retry: inspect the provider
 and use `:ReviewDrafts` to delete the draft or authorize a retry.
+
+### Browse discussions
+
+Use `gt` on a commented diff line to open its discussion. For a range comment,
+any line inside the range works. If several discussions share that line, they
+open together. In commit views, current-review discussions are mapped onto
+unchanged lines; ranges must remain contiguous and unchanged.
+
+Use `gT` in the panel or diff, or `:ReviewThreads`, to read all discussions across
+the MR/PR, including comments without a file position. In the discussion window:
+
+| Mapping | Action |
+| --- | --- |
+| `j` / `k` | Move through discussions and replies |
+| `Enter` | Jump to the selected discussion's comment line |
+| `q` | Close the window |
+
+`Enter` works on a discussion's heading, location or message text. It focuses the
+line in the displayed diff when available. Otherwise it opens the file in the
+complete MR/PR view, focuses the commented side (including deleted lines), opens
+any folds and centers the cursor.
+
+For an older comment, the plugin maps unchanged lines to the current review.
+If its line was rewritten/deleted, its file is no longer in the review diff, or
+the provider does not expose its original revision, the discussion stays open
+with an explanatory message. Comments without a file line remain readable.
 
 ### Line positions in commit views
 
