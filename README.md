@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="128" alt="review.nvim logo">
+</p>
+
 # review.nvim
 
 Repository: [edjubert/review.nvim](https://github.com/edjubert/review.nvim).

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title">
+  <title id="title">review.nvim</title>
+
+  <!-- Card -->
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="#1F2430"/>
+
+  <!-- Removed line -->
+  <rect x="40" y="56" width="176" height="36" rx="10" fill="#E06C75" fill-opacity="0.18"/>
+  <rect x="52" y="72" width="14" height="4" rx="2" fill="#E06C75"/>
+  <rect x="80" y="69" width="100" height="10" rx="5" fill="#E06C75"/>
+
+  <!-- Added line -->
+  <rect x="40" y="104" width="176" height="36" rx="10" fill="#7FB04F" fill-opacity="0.18"/>
+  <rect x="52" y="120" width="14" height="4" rx="2" fill="#7FB04F"/>
+  <rect x="57" y="115" width="4" height="14" rx="2" fill="#7FB04F"/>
+  <rect x="80" y="117" width="124" height="10" rx="5" fill="#7FB04F"/>
+
+  <!-- Added line with a comment -->
+  <rect x="40" y="152" width="176" height="36" rx="10" fill="#7FB04F" fill-opacity="0.18"/>
+  <rect x="52" y="168" width="14" height="4" rx="2" fill="#7FB04F"/>
+  <rect x="57" y="163" width="4" height="14" rx="2" fill="#7FB04F"/>
+  <rect x="80" y="165" width="64" height="10" rx="5" fill="#7FB04F"/>
+
+  <!-- Comment bubble -->
+  <rect x="154" y="146" width="60" height="42" rx="15" fill="#F4F6F8"/>
+  <path d="M166 182 L164 206 L188 184 Z" fill="#F4F6F8"/>
+  <circle cx="169" cy="167" r="4.5" fill="#4B9ECC"/>
+  <circle cx="184" cy="167" r="4.5" fill="#4B9ECC"/>
+  <circle cx="199" cy="167" r="4.5" fill="#4B9ECC"/>
+</svg>
