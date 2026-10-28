@@ -5,6 +5,7 @@ local defaults = {
   keymaps = {
     comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr",
     info = "<leader>ri", toggle_comments = "<leader>rt", reply = "<leader>rR",
+    open_comment = "<leader>ro",
   },
   clone_protocol = "ssh",
   repo = nil,
@@ -17,7 +18,7 @@ function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
   assert(type(M.config.inline_comments) == "boolean", "inline_comments must be a boolean")
-  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments", "reply" }) do
+  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments", "reply", "open_comment" }) do
     assert(type(M.config.keymaps[name]) == "string" or M.config.keymaps[name] == false,
       "keymaps." .. name .. " must be a mapping string or false")
   end
@@ -74,6 +75,14 @@ function M.reply()
   s:reply()
 end
 
+function M.open_comment()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:open_comment()
+end
+
 function M.info()
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
@@ -99,6 +108,8 @@ function M._commands()
     { range = true, desc = "Create a local comment draft on a line or range" })
   vim.api.nvim_create_user_command("ReviewReply", M.reply,
     { desc = "Draft a reply to a discussion on the current diff line" })
+  vim.api.nvim_create_user_command("ReviewOpenComment", M.open_comment,
+    { desc = "Open the comment under the cursor in the browser" })
   vim.api.nvim_create_user_command("ReviewDrafts", function() if M.session then M.session:show_drafts() end end,
     { desc = "Inspect, edit or delete local drafts" })
   vim.api.nvim_create_user_command("ReviewThreads", function() if M.session then M.session:show_threads() end end,

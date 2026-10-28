@@ -118,6 +118,7 @@ function M.discussions(target, refs, files)
     local author = type(comment.user) == "table" and comment.user.login or "unknown"
     local note = {
       id = comment.id, body = comment.body or "", author = { username = author }, position = p,
+      web_url = type(comment.html_url) == "string" and comment.html_url or nil,
       -- REST comments do not expose a thread's resolved state.
       outdated = not line, system = false,
     }

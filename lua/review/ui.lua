@@ -90,6 +90,20 @@ function M.reply_key(session)
   return key
 end
 
+function M.open_comment_key(session)
+  local key = (session.config.keymaps or {}).open_comment
+  if key == nil then return "<leader>ro" end
+  return key
+end
+
+function M.bind_open_comment(session, buf)
+  local key = M.open_comment_key(session)
+  if key then
+    vim.keymap.set("n", key, function() session:open_comment() end,
+      { buffer = buf, silent = true, desc = "Open this comment in the browser" })
+  end
+end
+
 function M.bind(session, buf)
   local maps = {
     ["]c"] = function() session:move_commit(1) end,
@@ -189,6 +203,7 @@ function M.create(session)
     vim.keymap.set("n", reply_key, function() session:reply() end,
       { buffer = session.viewer_buf, silent = true, desc = "Draft a reply to this discussion" })
   end
+  M.bind_open_comment(session, session.viewer_buf)
   vim.api.nvim_set_current_win(session.viewer_win)
   set_lines(session.viewer_buf, { "Loading review…" })
   M.panel(session)
@@ -202,6 +217,7 @@ local function footer_hints(session)
     " ]h/[h next/previous change",
     " gt thread here · gT all threads",
     " " .. (M.reply_key(session) or ":ReviewReply") .. " reply to thread",
+    " " .. (M.open_comment_key(session) or ":ReviewOpenComment") .. " open comment URL",
     " " .. (M.toggle_comments_key(session) or ":ReviewToggleComments")
       .. " inline comments (" .. (session.inline_comments and "on" or "off") .. ")",
     " gd drafts · " .. (M.info_key(session) or ":ReviewInfo") .. " info",
@@ -410,7 +426,8 @@ local function inline_discussion(session, discussion)
       end
     end
   end
-  append("  ╰─ ", "gt: full discussion · " .. (M.reply_key(session) or ":ReviewReply") .. ": reply", "ReviewHelp")
+  append("  ╰─ ", "gt: full discussion · " .. (M.reply_key(session) or ":ReviewReply") .. ": reply · "
+    .. (M.open_comment_key(session) or ":ReviewOpenComment") .. ": browser", "ReviewHelp")
   return lines
 end
 

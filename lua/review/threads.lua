@@ -57,7 +57,7 @@ function M.contains(discussion, current, index)
 end
 
 function M.document(discussions)
-  local lines, entries, count = {}, {}, 0
+  local lines, entries, comments, count = {}, {}, {}, 0
   for _, discussion in ipairs(discussions) do
     local root = M.root(discussion)
     if root then
@@ -74,17 +74,22 @@ function M.document(discussions)
       end
       for _, note in ipairs(discussion.notes) do
         if not note.system then
+          local first = #lines + 1
           lines[#lines + 1] = ""
           lines[#lines + 1] = "### " .. ((note.author or {}).username or "unknown")
           vim.list_extend(lines, vim.split(note.body or "", "\n", { plain = true }))
+          for index = first, #lines do comments[index] = note end
         end
       end
       lines[#lines + 1] = ""
       -- Enter works anywhere in a discussion, including its replies.
-      for index = start, #lines do entries[index] = discussion end
+      for index = start, #lines do
+        entries[index] = discussion
+        comments[index] = comments[index] or root
+      end
     end
   end
-  return lines, entries
+  return lines, entries, comments
 end
 
 return M

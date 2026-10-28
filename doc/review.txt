@@ -52,6 +52,14 @@ COMMANDS
 :ReviewDrafts                                                *:ReviewDrafts*
     Inspect, edit or delete local drafts.
 
+:ReviewOpenComment                                      *:ReviewOpenComment*
+    Open the comment under the cursor in the system's default browser.
+    In the diff, any line in a commented range works; choose a discussion
+    when several cover the line. Open its root comment.
+    In a discussion window, open the selected comment or reply.
+    Report unavailable URLs or browser launch errors. Local drafts have
+    no published URL. Supported on GitLab, GitHub and Codeberg.
+
 :ReviewThreads                                              *:ReviewThreads*
     Read all discussions across the MR/PR.
     Enter on a discussion jumps to its comment line; q closes the window.
@@ -85,6 +93,7 @@ MAPPINGS
 Panel: <CR> opens the selected commit or file.
 Diff: <leader>rc drafts a comment in normal or visual mode (configurable).
       <leader>rR drafts a reply to a discussion on this line (configurable).
+      <leader>ro opens the comment URL in the browser (configurable).
 Both: ]c/[c next/previous commit; ]f/[f next/previous file;
       ]h/[h next/previous change block in the current file (counts supported);
       gA complete MR/PR; gd local drafts;
@@ -119,6 +128,8 @@ gT or :ReviewThreads opens all discussions, including general comments.
 
 In the discussion window, j/k moves through the text, Enter jumps to the
 discussion's file and comment line, and q closes the window.
+<leader>ro or :ReviewOpenComment opens the comment or reply under the cursor
+in the browser. Discussion headings and file locations open the root comment.
 Enter works from headings, locations, messages and replies.
 The jump focuses the appropriate old/new side, opens folds and centers the
 cursor. When needed, it opens the complete MR/PR comparison.
@@ -127,6 +138,20 @@ Older comments are mapped to the current review only when their line is
 unchanged. If the line was rewritten/deleted, the file is no longer in the
 review diff, or its original revision is unavailable, the discussion stays
 open with an explanatory message. General comments have no line to jump to.
+
+COMMENT URLS                                            *review-comment-urls*
+
+:ReviewOpenComment or <leader>ro opens a comment with vim.ui.open.
+In the diff, any line inside its range works. Select a discussion if several
+cover the line; its root comment opens. In a discussion window, the comment or
+reply under the cursor opens. General, resolved and outdated comments can also
+be opened when their URL is available.
+
+GitLab links use the note ID. GitHub and Codeberg use the comment URLs returned
+by their APIs. Missing URLs and browser launch errors display a message.
+Local drafts have no published URL.
+Set keymaps.open_comment to a custom shortcut or false to disable the mapping
+in both the diff and discussion windows; the command remains available.
 
 INLINE DISCUSSIONS                                    *review-inline-comments*
 
@@ -176,6 +201,7 @@ CONFIGURATION                                                  *review-setup*
         info = "<leader>ri",
         toggle_comments = "<leader>rt",
         reply = "<leader>rR",
+        open_comment = "<leader>ro",
       }, -- false disables a mapping
       clone_protocol = "ssh",
       repo = nil,

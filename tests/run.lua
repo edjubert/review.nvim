@@ -737,6 +737,261 @@ local function mocked(overrides, fn)
   assert(ok, err)
 end
 
+local function comment_url_fixture(opts)
+  local s = reply_fixture(opts)
+  for index, discussion in ipairs(s.data.discussions) do
+    for note_index, note in ipairs(discussion.notes or {}) do
+      if not note.system then
+        note.id = note.id or 1000 + 10 * index + note_index
+        note.web_url = target.url .. "#note_" .. note.id
+      end
+    end
+  end
+  return s
+end
+
+test("providers expose individual comment URLs, including replies and nullable API links", function()
+  local github, codeberg = require("review.providers.github"), require("review.providers.codeberg")
+  local gh_target = assert(url.parse("https://github.example/owner/repo/pull/7"))
+  local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/8"))
+  local gh_root, gh_reply = gh_target.url .. "#discussion_r42", gh_target.url .. "#discussion_r43"
+  local cb_url = cb_target.url .. "#discussioncomment-52"
+  mocked({
+    { provider, "pages", function(_, endpoint)
+      eq(endpoint, provider.mr_path(target) .. "/discussions")
+      return { { notes = {
+        { id = 41 }, { id = 42 }, { id = 43, system = true }, { id = vim.NIL },
+      } } }
+    end },
+    { github, "pages", function(_, endpoint)
+      eq(endpoint, github.pr_path(gh_target) .. "/comments")
+      return {
+        { id = 43, in_reply_to_id = 42, html_url = gh_reply },
+        { id = 42, html_url = gh_root },
+        { id = 44, html_url = vim.NIL },
+      }
+    end },
+    { codeberg, "pages", function(_, endpoint)
+      eq(endpoint, codeberg.pr_path(cb_target) .. "/reviews")
+      return { { id = 5, state = "COMMENT", comments_count = 2 } }
+    end },
+    { codeberg, "request", function(_, endpoint, body)
+      eq(body, nil); eq(endpoint, codeberg.pr_path(cb_target) .. "/reviews/5/comments")
+      return { { id = 52, html_url = cb_url }, { id = 53, html_url = vim.NIL } }
+    end },
+  }, function()
+    local gl_notes = provider.discussions(target)[1].notes
+    eq(gl_notes[1].web_url, target.url .. "#note_41")
+    eq(gl_notes[2].web_url, target.url .. "#note_42")
+    eq(gl_notes[3].web_url, nil); eq(gl_notes[4].web_url, nil)
+    local gh = github.discussions(gh_target, refs, {})
+    eq(gh[1].notes[1].web_url, gh_root); eq(gh[1].notes[2].web_url, gh_reply)
+    eq(gh[2].notes[1].web_url, nil)
+    local cb = codeberg.discussions(cb_target, refs, {})
+    eq(cb[1].notes[1].web_url, cb_url); eq(cb[2].notes[1].web_url, nil)
+  end)
+end)
+
+test("ReviewOpenComment opens old/new range comments without API requests or draft changes", function()
+  local s, review = comment_url_fixture(), require("review")
+  local new, old = s.data.discussions[1], s.data.discussions[2]
+  s.data.discussions = { new, old }
+  s.drafts = { drafts.new("Keep local", vim.deepcopy(new.notes[1].position), "head") }
+  local before, opened = vim.deepcopy(s.drafts), {}
+  mocked({
+    { review, "session", s },
+    { provider, "request", function() error("Opening a comment must not request the API") end },
+    { vim.ui, "open", function(value) opened[#opened + 1] = value; return {} end },
+  }, function()
+    review._commands()
+    for _, row in ipairs({ 2, 3, 4, 5 }) do
+      vim.api.nvim_win_set_cursor(s.viewer_win, { row, 0 })
+      vim.cmd.ReviewOpenComment()
+    end
+    eq(opened, { old.notes[1].web_url, old.notes[1].web_url, new.notes[1].web_url, new.notes[1].web_url })
+    eq(vim.api.nvim_get_current_win(), s.viewer_win)
+    eq(s.drafts, before)
+  end)
+  s:close()
+end)
+
+test("opening overlapping discussions supports selection, cancellation and stale-session guards", function()
+  local s, opened, pending = comment_url_fixture(), {}
+  mocked({
+    { vim.ui, "open", function(value) opened[#opened + 1] = value; return {} end },
+    { vim.ui, "select", function(items, opts, selected)
+      eq(opts.prompt, "Open which discussion in the browser?")
+      eq(#items, 2)
+      assert(opts.format_item(items[2]):find("@dave", 1, true))
+      pending = selected
+    end },
+  }, function()
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 })
+    s:open_comment()
+    eq(#opened, 0)
+    pending(nil)
+    eq(#opened, 0)
+    s:open_comment()
+    pending(s.data.discussions[3])
+    eq(opened, { s.data.discussions[3].notes[1].web_url })
+    s:open_comment()
+    s.generation = s.generation + 1
+    pending(s.data.discussions[1])
+    eq(#opened, 1)
+    s:open_comment()
+    s:close()
+    pending(s.data.discussions[1])
+    eq(#opened, 1)
+  end)
+end)
+
+test("comment URLs follow discussions mapped into an individual commit view", function()
+  local s, opened = comment_url_fixture()
+  local discussion, original = s.data.discussions[1], s.current.new
+  s.data.discussions = { discussion }
+  s.current.head, s.current.new = "early", "zero\n" .. original
+  s.current.rows = assert(diff.build(s.current.old, s.current.new))
+  mocked({
+    { git, "files", function(repo) eq(repo, s.repo); return {} end },
+    { git, "content", function(repo, sha)
+      eq(repo, s.repo); eq(sha, refs.head_sha); return original
+    end },
+    { vim.ui, "open", function(value) opened = value; return {} end },
+  }, function()
+    s:map_threads(s.current, s.generation)
+    ui.render(s, s.current)
+    for row, entry in ipairs(s.current.rows) do
+      if entry.new_line == 3 then vim.api.nvim_win_set_cursor(s.viewer_win, { row, 0 }); break end
+    end
+    s:open_comment()
+    eq(opened, discussion.notes[1].web_url)
+  end)
+  s:close()
+end)
+
+test("discussion windows open the exact reply or general comment and retain Enter navigation", function()
+  local s, review, opened = comment_url_fixture(), require("review"), {}
+  local discussion, general = s.data.discussions[1], s.data.discussions[4]
+  discussion.notes[1].resolved = true
+  mocked({
+    { review, "session", s },
+    { vim.ui, "open", function(value) opened[#opened + 1] = value; return {} end },
+  }, function()
+    review._commands()
+    s:show_threads({ discussion })
+    local buf, win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+    vim.cmd.ReviewOpenComment() -- Discussion heading opens its root.
+    local reply_row
+    for row, text in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+      if text == "A reply" then reply_row = row; break end
+    end
+    assert(reply_row)
+    vim.api.nvim_win_set_cursor(win, { reply_row, 0 })
+    vim.cmd.ReviewOpenComment()
+    vim.api.nvim_win_set_cursor(win, { reply_row - 1, 0 }) -- Reply author heading.
+    vim.fn.maparg("<leader>ro", "n", false, true).callback()
+    s:show_threads({ general })
+    local general_buf, general_win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+    vim.cmd.ReviewOpenComment()
+    eq(opened, {
+      discussion.notes[1].web_url, discussion.notes[3].web_url,
+      discussion.notes[3].web_url, general.notes[1].web_url,
+    })
+    vim.api.nvim_win_close(general_win, true)
+    eq(s.thread_documents[general_buf], nil)
+    vim.api.nvim_set_current_win(win)
+    vim.fn.maparg("<CR>", "n", false, true).callback()
+    eq(s.thread_documents[buf], nil)
+    eq(vim.api.nvim_get_current_win(), s.viewer_win)
+    eq(vim.api.nvim_win_get_cursor(s.viewer_win)[1], 5)
+  end)
+  s:close()
+end)
+
+test("comment opening reports missing links, invalid contexts and browser launch errors", function()
+  local s, review, messages, opened = comment_url_fixture(), require("review"), {}, 0
+  s.data.discussions = { s.data.discussions[1] }
+  local note = s.data.discussions[1].notes[1]
+  mocked({
+    { review, "session", s },
+    { vim, "notify", function(message) messages[#messages + 1] = message end },
+    { vim.ui, "open", function() opened = opened + 1; return nil, "No browser handler" end },
+  }, function()
+    review._commands()
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 1, 0 })
+    vim.cmd.ReviewOpenComment()
+    assert(messages[#messages]:find("No discussion", 1, true))
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 })
+    for _, value in ipairs({ false, vim.NIL, "", "file:///tmp/comment", "https://example/\ncomment" }) do
+      note.web_url = value
+      vim.cmd.ReviewOpenComment()
+      assert(messages[#messages]:find("No URL", 1, true))
+    end
+    note.web_url = nil
+    vim.cmd.ReviewOpenComment()
+    eq(opened, 0)
+    note.web_url = target.url .. "#note_101"
+    vim.cmd.ReviewOpenComment()
+    assert(messages[#messages]:find("No browser handler", 1, true))
+    mocked({ { vim.ui, "open", function() error("Browser spawn failed") end } }, function()
+      vim.cmd.ReviewOpenComment()
+      assert(messages[#messages]:find("Browser spawn failed", 1, true))
+    end)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.cmd.ReviewOpenComment()
+    assert(messages[#messages]:find("commented diff line or in a discussion window", 1, true))
+    s:show_threads({})
+    vim.cmd.ReviewOpenComment()
+    assert(messages[#messages]:find("No comment under the cursor", 1, true))
+    vim.api.nvim_win_close(vim.api.nvim_get_current_win(), true)
+    mocked({ { review, "session", false } }, function()
+      vim.cmd.ReviewOpenComment()
+      assert(messages[#messages]:find("Open a review", 1, true))
+    end)
+    eq(opened, 1); eq(#s.drafts, 0)
+  end)
+  s:close()
+end)
+
+test("comment browser shortcut is configurable in diff and discussion buffers and can be disabled", function()
+  local review, before = require("review"), vim.deepcopy(require("review").config)
+  review.setup()
+  eq(review.config.keymaps.open_comment, "<leader>ro")
+  raises(function() review.setup({ keymaps = { open_comment = true } }) end, "keymaps.open_comment")
+  review.setup(before)
+  for _, key in ipairs({ "<leader>ro", "<leader>rO", false }) do
+    local s, opened = comment_url_fixture({ keymaps = { open_comment = key } }), 0
+    s.data.discussions = { s.data.discussions[1] }
+    mocked({
+      { review, "session", s },
+      { vim.ui, "open", function() opened = opened + 1; return {} end },
+    }, function()
+      vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 })
+      local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
+      assert(hints:find((key or ":ReviewOpenComment") .. " open comment URL", 1, true))
+      local function check_mapping()
+        if key then
+          local mapping = vim.fn.maparg(key, "n", false, true)
+          eq(mapping.buffer, 1)
+          mapping.callback()
+        else
+          local maps = vim.api.nvim_buf_get_keymap(vim.api.nvim_get_current_buf(), "n")
+          assert(not vim.iter(maps):any(function(map) return map.desc == "Open this comment in the browser" end))
+          vim.cmd.ReviewOpenComment()
+        end
+      end
+      check_mapping()
+      local maps = vim.api.nvim_buf_get_keymap(s.panel_buf, "n")
+      assert(not vim.iter(maps):any(function(map) return map.desc == "Open this comment in the browser" end))
+      s:show_threads()
+      check_mapping()
+      eq(opened, 2)
+      vim.api.nvim_win_close(vim.api.nvim_get_current_win(), true)
+    end)
+    s:close()
+  end
+end)
+
 test("ReviewReply saves a persistent local reply from any line in a commented range", function()
   local s, review = reply_fixture(), require("review")
   s.data.discussions = { s.data.discussions[1] }

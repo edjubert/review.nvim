@@ -24,6 +24,7 @@ in Neovim.
 - Open the discussion under the cursor or browse all review discussions.
 - Toggle discussion messages and replies directly below their commented lines.
 - Jump from a discussion to its commented line.
+- Open a comment or reply in the browser.
 - Refresh the open review without losing local drafts.
 
 The URL selects the provider automatically. GitLab, self-hosted GitLab, GitHub,
@@ -103,7 +104,7 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewComment", "ReviewReply", "ReviewDrafts",
+    "Review", "ReviewInfo", "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
     "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit", "ReviewClose",
   },
   opts = {},
@@ -152,6 +153,7 @@ merge base.
 | `:ReviewComment` | Compose a local draft on the current line |
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
 | `:ReviewReply` | Draft a reply to a discussion on the current diff line |
+| `:ReviewOpenComment` | Open the comment under the cursor in the browser |
 | `:ReviewDrafts` | Inspect, edit or delete local drafts |
 | `:ReviewThreads` | Read all discussions and jump to their comment lines |
 | `:ReviewToggleComments` | Show or hide discussion messages and replies inline |
@@ -171,6 +173,7 @@ merge base.
 | `gA` | Complete MR/PR |
 | `<leader>rc` in the diff, normal or visual mode | Comment on the line / range |
 | `<leader>rR` in the diff | Draft a reply to a discussion on the current line |
+| `<leader>ro` in the diff or discussion window | Open the comment in the browser |
 | `<leader>rs` in the panel or diff | Preview drafts and choose whether to publish |
 | `<leader>rr` in the panel or diff | Refresh the review |
 | `<leader>ri` in the panel or diff | Show the MR/PR title and description |
@@ -271,6 +274,7 @@ In the discussion window:
 | --- | --- |
 | `j` / `k` | Move through discussions and replies |
 | `Enter` | Jump to the selected discussion's comment line |
+| `<leader>ro` | Open the selected comment or reply in the browser |
 | `q` | Close the window |
 
 `Enter` works on a discussion's heading, location or message text. It focuses the
@@ -282,6 +286,24 @@ For an older comment, the plugin maps unchanged lines to the current review.
 If its line was rewritten/deleted, its file is no longer in the review diff, or
 the provider does not expose its original revision, the discussion stays open
 with an explanatory message. Comments without a file line remain readable.
+
+### Open a comment in the browser
+
+Run `:ReviewOpenComment` or press `<leader>ro` on a commented diff line.
+Any line inside a comment range works; if several discussions cover the line,
+choose which one to open. The browser opens the discussion's root comment.
+
+In a discussion window (`gt`, `gT` or `:ReviewThreads`), the same command and
+shortcut open the comment or reply under the cursor. Discussion headings and
+file locations open the root comment. General, resolved and outdated comments
+can also be opened when their URL is available.
+
+The plugin uses GitLab note links and the comment URLs returned by GitHub and
+Codeberg, opening them with Neovim's `vim.ui.open` and the system's default
+browser. If a comment has no URL or the browser cannot be launched, a message
+explains why. Local drafts have no published URL.
+Configure `keymaps.open_comment` to change the shortcut, or set it to `false`
+to keep only the command.
 
 ### Inline discussions
 
@@ -376,6 +398,7 @@ require("review").setup({
     info = "<leader>ri",    -- normal, panel/diff; false disables this mapping
     toggle_comments = "<leader>rt", -- normal, panel/diff; false disables this mapping
     reply = "<leader>rR",   -- normal, diff; false disables this mapping
+    open_comment = "<leader>ro", -- normal, diff/discussion; false disables this mapping
   },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected

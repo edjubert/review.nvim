@@ -18,6 +18,7 @@ function Session.new(target, config)
     target = target, config = config, drafts = drafts.load(config, target),
     provider = providers.for_target(target),
     inline_comments = config.inline_comments == true,
+    thread_documents = {},
     commit_index = 0, files = {}, closed = false, generation = 0,
   }, Session)
 end
@@ -461,13 +462,64 @@ function Session:show_thread_at_cursor()
   self:show_threads(selected, "Discussion under cursor")
 end
 
+function Session:open_comment()
+  if not ui.valid(self) then return end
+  local function open(note)
+    local web_url = note and note.web_url
+    if type(web_url) ~= "string" or not web_url:match("^https?://%S+$") or web_url:find("%c") then
+      notify("No URL is available for this comment.", vim.log.levels.WARN)
+      return
+    end
+    local ok, job, err = pcall(vim.ui.open, web_url)
+    if not ok or not job then
+      notify("Could not open the comment URL: " .. tostring(ok and err or job), vim.log.levels.ERROR)
+    end
+  end
+  local buf, row = vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)[1]
+  local comments = self.thread_documents[buf]
+  if comments then
+    if comments[row] then open(comments[row])
+    else notify("No comment under the cursor.") end
+    return
+  end
+  if buf ~= self.viewer_buf or not self.data or not self.current or not self.current.rows then
+    notify("Use :ReviewOpenComment on a commented diff line or in a discussion window.", vim.log.levels.WARN)
+    return
+  end
+  local selected = {}
+  for _, discussion in ipairs(self.data.discussions or {}) do
+    if threads.contains(discussion, self.current, row) then selected[#selected + 1] = discussion end
+  end
+  if #selected == 0 then notify("No discussion on this line. Use gT to see all discussions."); return end
+  if #selected == 1 then open(threads.root(selected[1])); return end
+  local generation = self.generation
+  vim.ui.select(selected, {
+    prompt = "Open which discussion in the browser?",
+    format_item = function(discussion)
+      local root = threads.root(discussion)
+      return ("@%s · %s"):format((root.author or {}).username or "unknown",
+        (root.body or ""):gsub("[\r\n]", " "))
+    end,
+  }, function(discussion)
+    if discussion and generation == self.generation and ui.valid(self) then open(threads.root(discussion)) end
+  end)
+end
+
 function Session:show_threads(discussions, title)
   if not self.data or not ui.valid(self) then return end
-  local lines, entries = threads.document(discussions or self.data.discussions)
-  ui.document((title or (self.provider.name .. " discussions")) .. " · Enter: line · q: close", lines, {
+  local lines, entries, comments = threads.document(discussions or self.data.discussions)
+  local key = ui.open_comment_key(self) or ":ReviewOpenComment"
+  local buf = ui.document((title or (self.provider.name .. " discussions"))
+    .. " · Enter: line · " .. key .. ": browser · q: close", lines, {
     empty = "No discussions in this review.",
     entries = entries,
     on_select = function(discussion, close) self:jump_thread(discussion, close) end,
+  })
+  self.thread_documents[buf] = comments
+  ui.bind_open_comment(self, buf)
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf, once = true,
+    callback = function() self.thread_documents[buf] = nil end,
   })
 end
 

@@ -60,7 +60,7 @@ function M.load(target)
     commits = ordered,
     project = M.request(target, M.project_path(target)),
     diffs = M.pages(target, endpoint .. "/diffs"),
-    discussions = M.pages(target, endpoint .. "/discussions"),
+    discussions = M.discussions(target),
   }
 end
 
@@ -69,7 +69,15 @@ function M.current(target)
 end
 
 function M.discussions(target)
-  return M.pages(target, M.mr_path(target) .. "/discussions")
+  local discussions = M.pages(target, M.mr_path(target) .. "/discussions")
+  for _, discussion in ipairs(discussions) do
+    for _, note in ipairs(discussion.notes or {}) do
+      if not note.system and type(note.id) == "number" and note.id > 0 and note.id % 1 == 0 then
+        note.web_url = target.url .. "#note_" .. note.id
+      end
+    end
+  end
+  return discussions
 end
 
 function M.post(target, draft)

@@ -176,6 +176,7 @@ function M.discussions(target, refs, files)
           id = comment.id,
           notes = { {
             id = comment.id, body = comment.body or "", position = p, system = false,
+            web_url = type(comment.html_url) == "string" and comment.html_url or nil,
             author = { username = type(comment.user) == "table" and comment.user.login or "unknown" },
             resolved = type(comment.resolver) == "table" and comment.resolver.id ~= nil,
             outdated = review.stale == true,
