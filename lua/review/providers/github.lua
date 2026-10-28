@@ -1,6 +1,7 @@
 local async = require("review.async")
 local url = require("review.url")
 local position = require("review.position")
+local threads = require("review.threads")
 local M = { name = "GitHub", cli = "gh", kind = "PR", label = "pull request", prefix = "#" }
 
 function M.head_ref(target)
@@ -108,6 +109,12 @@ function M.discussions(target, refs, files)
       new_line = comment.side ~= "LEFT" and display_line or nil,
       old_line = comment.side == "LEFT" and display_line or nil,
     }
+    local start = number(line and comment.start_line or comment.original_start_line)
+    if start and display_line and start < display_line
+        and (comment.start_side or comment.side) == comment.side then
+      local key = comment.side == "LEFT" and "old_line" or "new_line"
+      p.line_range = { start = { [key] = start }, ["end"] = { [key] = display_line } }
+    end
     local author = type(comment.user) == "table" and comment.user.login or "unknown"
     local note = {
       id = comment.id, body = comment.body or "", author = { username = author }, position = p,
@@ -196,6 +203,46 @@ function M.post(target, draft)
   -- Only the explicit submission flow calls this method.
   local response = M.request(target, M.pr_path(target) .. "/comments", body)
   if type(response) ~= "table" or not response.id then error("GitHub did not confirm the comment ID.", 0) end
+  return response
+end
+
+function M.reply_target(discussion)
+  local root = threads.root(discussion)
+  if not root or type(root.id) ~= "number" or root.id <= 0 or root.id % 1 ~= 0
+      or discussion.id ~= root.id then
+    return nil, "GitHub did not expose the top-level review comment ID."
+  end
+  return { discussion_id = discussion.id, note_id = root.id }
+end
+
+local function reply_id(draft)
+  local reply = draft.reply
+  if type(reply) ~= "table" or type(reply.note_id) ~= "number" or reply.note_id <= 0
+      or reply.note_id % 1 ~= 0 or reply.discussion_id ~= reply.note_id then
+    error("This reply has no valid GitHub root comment target. Recreate the reply draft.", 0)
+  end
+  return tostring(reply.note_id)
+end
+
+function M.validate_reply(target, draft)
+  local comment = M.request(target, M.repo_path(target) .. "/pulls/comments/" .. reply_id(draft))
+  local suffix = "/" .. M.pr_path(target)
+  if type(comment) ~= "table" or comment.id ~= draft.reply.note_id
+      or (comment.in_reply_to_id ~= nil and comment.in_reply_to_id ~= vim.NIL)
+      or type(comment.pull_request_url) ~= "string" or comment.pull_request_url:sub(-#suffix) ~= suffix then
+    error("The original GitHub comment is no longer available in this PR. The reply remains local.", 0)
+  end
+end
+
+function M.reply(target, draft)
+  -- GitHub only accepts replies to top-level review comments.
+  local response = M.request(target, M.pr_path(target) .. "/comments/" .. reply_id(draft) .. "/replies", {
+    body = draft.body,
+  })
+  if type(response) ~= "table" or type(response.id) ~= "number" or response.id <= 0
+      or response.in_reply_to_id ~= draft.reply.note_id then
+    error("GitHub did not confirm the reply's root comment ID.", 0)
+  end
   return response
 end
 

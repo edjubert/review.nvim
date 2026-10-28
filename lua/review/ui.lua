@@ -84,6 +84,12 @@ function M.toggle_comments_key(session)
   return key
 end
 
+function M.reply_key(session)
+  local key = (session.config.keymaps or {}).reply
+  if key == nil then return "<leader>rR" end
+  return key
+end
+
 function M.bind(session, buf)
   local maps = {
     ["]c"] = function() session:move_commit(1) end,
@@ -178,6 +184,11 @@ function M.create(session)
       session:comment(start, finish or start)
     end, { buffer = session.viewer_buf, silent = true, desc = "Draft a review comment" })
   end
+  local reply_key = M.reply_key(session)
+  if reply_key then
+    vim.keymap.set("n", reply_key, function() session:reply() end,
+      { buffer = session.viewer_buf, silent = true, desc = "Draft a reply to this discussion" })
+  end
   vim.api.nvim_set_current_win(session.viewer_win)
   set_lines(session.viewer_buf, { "Loading review…" })
   M.panel(session)
@@ -190,6 +201,7 @@ local function footer_hints(session)
     " ]c/[c commits · ]f/[f files",
     " ]h/[h next/previous change",
     " gt thread here · gT all threads",
+    " " .. (M.reply_key(session) or ":ReviewReply") .. " reply to thread",
     " " .. (M.toggle_comments_key(session) or ":ReviewToggleComments")
       .. " inline comments (" .. (session.inline_comments and "on" or "off") .. ")",
     " gd drafts · " .. (M.info_key(session) or ":ReviewInfo") .. " info",
@@ -398,7 +410,7 @@ local function inline_discussion(session, discussion)
       end
     end
   end
-  append("  ╰─ ", "gt: full discussion", "ReviewHelp")
+  append("  ╰─ ", "gt: full discussion · " .. (M.reply_key(session) or ":ReviewReply") .. ": reply", "ReviewHelp")
   return lines
 end
 
@@ -418,11 +430,12 @@ function M.comments(session)
   end
   for _, draft in ipairs(session.drafts) do
     local d = draft.display
+    local label = draft.reply and "local reply" or "local draft"
     if d and d.head == current.head and d.base == current.base and d.path == current.file.new_path then
-      mark(d.old_line, d.new_line, "local draft")
+      mark(d.old_line, d.new_line, label)
     elseif draft.position.new_path == current.file.new_path and draft.position.head_sha == current.head then
       local p = draft.position
-      mark(p.base_sha == current.base and p.old_line or nil, p.new_line, "local draft")
+      mark(p.base_sha == current.base and p.old_line or nil, p.new_line, label)
     end
   end
   for _, discussion in ipairs(session.data and session.data.discussions or {}) do

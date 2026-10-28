@@ -308,9 +308,9 @@ function Session:comment_position(current, first, last)
   return result
 end
 
-function Session:save_draft(body, target_position, commit, display)
+function Session:save_draft(body, target_position, commit, display, reply)
   local updated = vim.deepcopy(self.drafts)
-  updated[#updated + 1] = drafts.new(body, target_position, commit, display)
+  updated[#updated + 1] = drafts.new(body, target_position, commit, display, reply)
   drafts.save(self.config, self.target, updated)
   self.drafts = updated
   ui.panel(self)
@@ -336,13 +336,58 @@ function Session:comment(first, last)
   end, nil, generation)
 end
 
+function Session:reply()
+  if self.refreshing then notify("Wait for the review refresh to finish.", vim.log.levels.WARN); return end
+  if self.submitting then notify("Wait for comment submission to finish.", vim.log.levels.WARN); return end
+  if not self.data or not self.current or not self.current.rows
+      or vim.api.nvim_get_current_buf() ~= self.viewer_buf then
+    notify("Use :ReviewReply on a commented review diff line.", vim.log.levels.WARN)
+    return
+  end
+  local selected, row = {}, vim.api.nvim_win_get_cursor(self.viewer_win)[1]
+  for _, discussion in ipairs(self.data.discussions or {}) do
+    if threads.contains(discussion, self.current, row) then selected[#selected + 1] = discussion end
+  end
+  if #selected == 0 then notify("No discussion on this line. Use gT to see all discussions."); return end
+  if not self.provider.reply_target or not self.provider.reply or not self.provider.validate_reply then
+    notify("Reply drafts are not supported by the " .. self.provider.name .. " provider.", vim.log.levels.WARN)
+    return
+  end
+  local current, generation = self.current, self.generation
+  local function compose(discussion)
+    if not discussion or generation ~= self.generation or not ui.valid(self) then return end
+    local destination, err = self.provider.reply_target(discussion)
+    if not destination then notify(err, vim.log.levels.WARN); return end
+    local root, anchor = threads.root(discussion), threads.anchor(discussion, current)
+    local author = ((root.author or {}).username or "unknown"):gsub("[\r\n\t]", " ")
+    destination.author, destination.body = author, root.body or ""
+    local p = vim.tbl_extend("force", vim.deepcopy(root.position), self.data.mr.diff_refs)
+    local display = { path = current.file.new_path, base = current.base, head = current.head,
+      [anchor.side .. "_line"] = anchor.last }
+    ui.compose(("Reply to @%s · %s:%d"):format(author, current.file.new_path, anchor.last), "", function(body)
+      if not ui.valid(self) then error("The review is closed. Reopen it before saving this reply.", 0) end
+      self:save_draft(body, p, current.head, display, destination)
+    end)
+  end
+  if #selected == 1 then compose(selected[1]); return end
+  vim.ui.select(selected, {
+    prompt = "Reply to which discussion?",
+    format_item = function(discussion)
+      local root = threads.root(discussion)
+      return ("@%s · %s"):format((root.author or {}).username or "unknown",
+        (root.body or ""):gsub("[\r\n]", " "))
+    end,
+  }, compose)
+end
+
 function Session:show_drafts()
   if #self.drafts == 0 then notify("No local drafts."); return end
   vim.ui.select(self.drafts, {
     prompt = "Local review drafts",
     format_item = function(draft)
       local p = draft.position
-      return (p.new_path or p.old_path) .. ":" .. (p.new_line or p.old_line)
+      return (draft.reply and ("Reply to @" .. (draft.reply.author or "unknown") .. " · ") or "")
+        .. (p.new_path or p.old_path) .. ":" .. (p.new_line or p.old_line)
         .. (draft.status and (" [" .. draft.status .. "]") or "") .. " · " .. draft.body:gsub("\n", " ")
     end,
   }, function(draft)
@@ -507,7 +552,17 @@ function Session:submit()
     local first = p.line_range and p.line_range.start
     local start = first and (first.new_line or first.old_line)
     local range = start and start ~= line and (start .. "–" .. line) or tostring(line)
-    preview[#preview + 1] = ("## %d · %s:%s"):format(i, p.new_path, range)
+    preview[#preview + 1] = ("## %d · %s%s:%s"):format(i,
+      draft.reply and ("Reply to @" .. (draft.reply.author or "unknown") .. " · ") or "", p.new_path, range)
+    if draft.reply then
+      preview[#preview + 1] = "Discussion: " .. tostring(draft.reply.discussion_id)
+      preview[#preview + 1] = "Original comment (context only):"
+      for _, text in ipairs(vim.split(draft.reply.body or "", "\n", { plain = true })) do
+        preview[#preview + 1] = "> " .. text
+      end
+      preview[#preview + 1] = ""
+      preview[#preview + 1] = "Reply:"
+    end
     vim.list_extend(preview, vim.split(draft.body, "\n", { plain = true }))
     preview[#preview + 1] = ""
   end
@@ -532,10 +587,19 @@ function Session:submit()
             if not position.same_refs(draft.position, current_mr.diff_refs) then
               error("The review changed during submission. Remaining drafts stay local.", 0)
             end
-            if self.provider.validate_submission then self.provider.validate_submission(self.target, draft) end
+            local publish = self.provider.post
+            if draft.reply then
+              if not self.provider.reply or not self.provider.validate_reply then
+                error("Reply drafts are not supported by the " .. self.provider.name .. " provider.", 0)
+              end
+              self.provider.validate_reply(self.target, draft)
+              publish = self.provider.reply
+            elseif self.provider.validate_submission then
+              self.provider.validate_submission(self.target, draft)
+            end
             draft.status = "sending"
             drafts.save(self.config, self.target, self.drafts)
-            local ok, response = pcall(self.provider.post, self.target, draft)
+            local ok, response = pcall(publish, self.target, draft)
             if not ok then
               draft.status = "uncertain"
               pcall(drafts.save, self.config, self.target, self.drafts)

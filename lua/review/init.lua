@@ -4,7 +4,7 @@ local defaults = {
   inline_comments = false,
   keymaps = {
     comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr",
-    info = "<leader>ri", toggle_comments = "<leader>rt",
+    info = "<leader>ri", toggle_comments = "<leader>rt", reply = "<leader>rR",
   },
   clone_protocol = "ssh",
   repo = nil,
@@ -17,7 +17,7 @@ function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
   assert(type(M.config.inline_comments) == "boolean", "inline_comments must be a boolean")
-  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments" }) do
+  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments", "reply" }) do
     assert(type(M.config.keymaps[name]) == "string" or M.config.keymaps[name] == false,
       "keymaps." .. name .. " must be a mapping string or false")
   end
@@ -66,6 +66,14 @@ function M.refresh()
   M.session:refresh()
 end
 
+function M.reply()
+  local s = M.session
+  if not s or s.closed or vim.api.nvim_get_current_buf() ~= s.viewer_buf then
+    vim.notify("Use :ReviewReply on a commented review diff line.", vim.log.levels.WARN); return
+  end
+  s:reply()
+end
+
 function M.info()
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
@@ -89,6 +97,8 @@ function M._commands()
     { desc = "Show the MR/PR title and description" })
   vim.api.nvim_create_user_command("ReviewComment", function(args) M.comment(args.line1, args.line2) end,
     { range = true, desc = "Create a local comment draft on a line or range" })
+  vim.api.nvim_create_user_command("ReviewReply", M.reply,
+    { desc = "Draft a reply to a discussion on the current diff line" })
   vim.api.nvim_create_user_command("ReviewDrafts", function() if M.session then M.session:show_drafts() end end,
     { desc = "Inspect, edit or delete local drafts" })
   vim.api.nvim_create_user_command("ReviewThreads", function() if M.session then M.session:show_threads() end end,

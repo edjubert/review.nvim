@@ -1,6 +1,7 @@
 local async = require("review.async")
 local url = require("review.url")
 local position = require("review.position")
+local threads = require("review.threads")
 local M = { name = "GitLab", cli = "glab", kind = "MR", label = "merge request", prefix = "!" }
 
 function M.head_ref(target)
@@ -77,6 +78,44 @@ function M.post(target, draft)
     body = draft.body,
     position = draft.position,
   })
+end
+
+function M.reply_target(discussion)
+  local root = threads.root(discussion)
+  if type(discussion.id) ~= "string" or discussion.id == ""
+      or not root or type(root.id) ~= "number" or root.id <= 0 or root.id % 1 ~= 0 then
+    return nil, "GitLab did not expose a valid discussion and root comment ID."
+  end
+  return { discussion_id = discussion.id, note_id = root.id }
+end
+
+local function reply_path(target, draft)
+  local reply = draft.reply
+  if type(reply) ~= "table" or type(reply.discussion_id) ~= "string" or reply.discussion_id == ""
+      or type(reply.note_id) ~= "number" or reply.note_id <= 0 or reply.note_id % 1 ~= 0 then
+    error("This reply has no valid GitLab discussion target. Recreate the reply draft.", 0)
+  end
+  return M.mr_path(target) .. "/discussions/" .. url.encode(reply.discussion_id)
+end
+
+function M.validate_reply(target, draft)
+  local discussion = M.request(target, reply_path(target, draft))
+  if type(discussion) == "table" and discussion.id == draft.reply.discussion_id then
+    for _, note in ipairs(discussion.notes or {}) do
+      if note.id == draft.reply.note_id and not note.system then return end
+    end
+  end
+  error("The original GitLab comment is no longer available. The reply remains local.", 0)
+end
+
+function M.reply(target, draft)
+  -- Only explicit submission may publish a reply; it creates a note in the
+  -- existing discussion, with no new position and no resolution change.
+  local response = M.request(target, reply_path(target, draft) .. "/notes", { body = draft.body })
+  if type(response) ~= "table" or type(response.id) ~= "number" or response.id <= 0 then
+    error("GitLab did not confirm the reply comment ID.", 0)
+  end
+  return response
 end
 
 return M

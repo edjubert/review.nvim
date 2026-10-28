@@ -18,6 +18,7 @@ in Neovim.
   and intraline highlights.
 - Select deleted lines as well as added lines.
 - Save, edit and delete persistent local comment drafts.
+- Draft replies to existing GitLab and GitHub discussions from their diff lines.
 - Preview and explicitly publish drafts as inline discussions on GitLab, GitHub
   or Codeberg.
 - Open the discussion under the cursor or browse all review discussions.
@@ -102,7 +103,7 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewComment", "ReviewDrafts",
+    "Review", "ReviewInfo", "ReviewComment", "ReviewReply", "ReviewDrafts",
     "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit", "ReviewClose",
   },
   opts = {},
@@ -150,6 +151,7 @@ merge base.
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewComment` | Compose a local draft on the current line |
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
+| `:ReviewReply` | Draft a reply to a discussion on the current diff line |
 | `:ReviewDrafts` | Inspect, edit or delete local drafts |
 | `:ReviewThreads` | Read all discussions and jump to their comment lines |
 | `:ReviewToggleComments` | Show or hide discussion messages and replies inline |
@@ -168,6 +170,7 @@ merge base.
 | `]h` / `[h` | Next / previous change block in the current file |
 | `gA` | Complete MR/PR |
 | `<leader>rc` in the diff, normal or visual mode | Comment on the line / range |
+| `<leader>rR` in the diff | Draft a reply to a discussion on the current line |
 | `<leader>rs` in the panel or diff | Preview drafts and choose whether to publish |
 | `<leader>rr` in the panel or diff | Refresh the review |
 | `<leader>ri` in the panel or diff | Show the MR/PR title and description |
@@ -302,6 +305,31 @@ General comments and discussions on unavailable lines remain accessible with
 Customize `ReviewCommentBorder`, `ReviewCommentAuthor` and `ReviewCommentBody`
 to change the blocks' colors.
 
+### Reply to a discussion
+
+Put the cursor on a commented diff line and run `:ReviewReply` or press
+`<leader>rR`. Any line inside a comment range works. If several discussions cover
+the line, select the one you want to answer.
+
+The Markdown editor creates a persistent **local reply draft**. `Ctrl-S` or `:w`
+saves it locally; `q` cancels. `:ReviewDrafts` lets you edit or delete it, and the
+diff marks it as `local reply`. `:ReviewSubmit` previews the original comment and
+your reply, then asks for explicit publication.
+
+Replies use the existing discussion ID, preserving the thread instead of creating
+a new inline comment. Before publication, the plugin checks the diff refs and
+that the original comment still exists. Failed or uncertain requests keep the
+draft, with the same retry safeguards as new comments.
+
+| Provider | Replies |
+| --- | --- |
+| GitLab | Adds a note to the existing MR discussion |
+| GitHub | Replies to the top-level PR review comment |
+| Codeberg | Reply drafts are not supported by this provider |
+
+Replies leave approval and resolution unchanged. Configure `keymaps.reply` to
+change the shortcut, or set it to `false` to keep only `:ReviewReply`.
+
 ### Line positions in commit views
 
 A comment written in a commit view is attached to the current **MR/PR discussion**.
@@ -347,6 +375,7 @@ require("review").setup({
     refresh = "<leader>rr", -- normal, panel/diff; false disables this mapping
     info = "<leader>ri",    -- normal, panel/diff; false disables this mapping
     toggle_comments = "<leader>rt", -- normal, panel/diff; false disables this mapping
+    reply = "<leader>rR",   -- normal, diff; false disables this mapping
   },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected
@@ -361,7 +390,8 @@ require("review").setup({
   Other Forgejo/Gitea hosts are not supported by the Codeberg provider.
 - Text files; binary files display a notice.
 - Commit diffs compare against the first parent. Root commits are not supported.
-- Discussion reading and new comments; replies/resolution are not implemented.
+- Discussion reading and new comments on all providers; replies on GitLab and
+  GitHub. Codeberg reply drafts and discussion resolution are not implemented.
 - The provider must expose the file's diff to accept a positional comment.
 - GitHub's files API exposes at most 3000 changed files. Larger PRs are rejected
   instead of presenting an incomplete review. Commit lists above 250 entries

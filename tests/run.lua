@@ -714,6 +714,399 @@ test("inline toggle survives file and commit navigation and successful or failed
   assert(ok, err)
 end)
 
+local reply_serial = 0
+local function reply_fixture(opts)
+  reply_serial = reply_serial + 1
+  local s = inline_fixture(vim.tbl_deep_extend("force",
+    { state_dir = root .. "/reply-state-" .. reply_serial }, opts or {}))
+  for index, discussion in ipairs(s.data.discussions) do
+    local note = require("review.threads").root(discussion)
+    if note then note.id = 100 + index end
+  end
+  return s
+end
+
+local function mocked(overrides, fn)
+  local saved = {}
+  for _, override in ipairs(overrides) do
+    saved[#saved + 1] = { override[1], override[2], override[1][override[2]] }
+    override[1][override[2]] = override[3]
+  end
+  local ok, err = xpcall(fn, debug.traceback)
+  for _, original in ipairs(saved) do original[1][original[2]] = original[3] end
+  assert(ok, err)
+end
+
+test("ReviewReply saves a persistent local reply from any line in a commented range", function()
+  local s, review = reply_fixture(), require("review")
+  s.data.discussions = { s.data.discussions[1] }
+  local reads, writes = 0, 0
+  mocked({
+    { review, "session", s },
+    { provider, "request", function() reads = reads + 1; error("Unexpected request") end },
+    { provider, "reply", function() writes = writes + 1; error("Unexpected write") end },
+  }, function()
+    review._commands()
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 }) -- First line of the new-side range.
+    vim.cmd.ReviewReply()
+    local editor = vim.api.nvim_get_current_buf()
+    eq(vim.bo[editor].buftype, "acwrite")
+    vim.api.nvim_buf_set_lines(editor, 0, -1, false, { "A local reply", "with two lines" })
+    vim.cmd.write()
+    eq(reads, 0); eq(writes, 0); eq(#s.drafts, 1)
+    local draft = s.drafts[1]
+    eq(draft.reply.discussion_id, "new"); eq(draft.reply.note_id, 101)
+    eq(draft.reply.author, "alice"); eq(draft.body, "A local reply\nwith two lines")
+    eq(draft.display.new_line, 3)
+    eq(draft.position.head_sha, refs.head_sha)
+    eq(drafts.load(s.config, s.target), s.drafts)
+    assert(comment_marks(s)[1][4].virt_text[1][1]:find("local reply", 1, true))
+    local restarted = Session.new(target, s.config)
+    eq(restarted.drafts[1].reply, draft.reply)
+  end)
+  s:close()
+end)
+
+test("ReviewReply chooses among overlapping threads, supports deletions and ignores stale selections", function()
+  local s = reply_fixture()
+  local composer, pending
+  mocked({
+    { ui, "compose", function(title, _, saved) composer = { title = title, save = saved } end },
+    { vim.ui, "select", function(items, opts, selected)
+      eq(opts.prompt, "Reply to which discussion?")
+      eq(#items, 2)
+      assert(opts.format_item(items[2]):find("@dave", 1, true))
+      pending = function() selected(items[2]) end
+    end },
+  }, function()
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 })
+    s:reply()
+    eq(composer, nil)
+    pending()
+    assert(composer.title:find("@dave", 1, true))
+    composer.save("Selected reply")
+    eq(s.drafts[1].reply.discussion_id, "second")
+    eq(s.drafts[1].reply.note_id, 103)
+    composer = nil
+    s:reply()
+    s.generation = s.generation + 1
+    pending()
+    eq(composer, nil)
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 2, 0 }) -- First deleted line in old-side range.
+    s:reply()
+    assert(composer.title:find("@carol", 1, true))
+    composer.save("Deleted-side reply")
+    eq(s.drafts[2].reply.discussion_id, "old")
+    eq(s.drafts[2].display.old_line, 3)
+  end)
+  s:close()
+end)
+
+test("reply shortcut is configurable, diff-only, and cancellation leaves no draft", function()
+  for _, key in ipairs({ "<leader>rR", "<leader>rp", false }) do
+    local s = reply_fixture({ keymaps = { reply = key } })
+    s.data.discussions = { s.data.discussions[1] }
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 })
+    if key then
+      local mapping = vim.fn.maparg(key, "n", false, true)
+      eq(mapping.buffer, 1)
+      mapping.callback()
+      eq(vim.bo[vim.api.nvim_get_current_buf()].buftype, "acwrite")
+      vim.api.nvim_win_close(vim.api.nvim_get_current_win(), true)
+    else
+      local maps = vim.api.nvim_buf_get_keymap(s.viewer_buf, "n")
+      assert(not vim.iter(maps):any(function(map) return map.desc == "Draft a reply to this discussion" end))
+      local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
+      assert(hints:find(":ReviewReply", 1, true))
+    end
+    local maps = vim.api.nvim_buf_get_keymap(s.panel_buf, "n")
+    assert(not vim.iter(maps):any(function(map) return map.desc == "Draft a reply to this discussion" end))
+    eq(#s.drafts, 0)
+    s:close()
+  end
+end)
+
+test("reply commands reject empty lines, unavailable root IDs and unsupported providers", function()
+  local s = reply_fixture()
+  local messages, editors = {}, 0
+  mocked({
+    { vim, "notify", function(message) messages[#messages + 1] = message end },
+    { ui, "compose", function() editors = editors + 1 end },
+  }, function()
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 1, 0 })
+    s:reply()
+    assert(messages[#messages]:find("No discussion", 1, true))
+    s.data.discussions = { s.data.discussions[1] }
+    s.data.discussions[1].notes[1].id = nil
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 })
+    s:reply()
+    assert(messages[#messages]:find("root comment ID", 1, true))
+    s.provider = require("review.providers.codeberg")
+    s:reply()
+    assert(messages[#messages]:find("not supported", 1, true))
+    eq(editors, 0); eq(#s.drafts, 0)
+  end)
+  s:close()
+end)
+
+test("GitLab and GitHub replies use existing thread endpoints with body-only payloads", function()
+  local github = require("review.providers.github")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/7"))
+  local body = "Literal `$(command)`\nand Markdown"
+  local gl_reply = assert(provider.reply_target({ id = "thread/id", notes = { { id = 41 } } }))
+  local gh_reply = assert(github.reply_target({ id = 42, notes = { { id = 42 } } }))
+  local calls = {}
+  mocked({
+    { provider, "request", function(_, endpoint, payload)
+      calls[#calls + 1] = { endpoint = endpoint, body = payload }
+      if payload then return { id = 51 } end
+      return { id = "thread/id", notes = { { id = 41, system = false } } }
+    end },
+    { github, "request", function(_, endpoint, payload)
+      calls[#calls + 1] = { endpoint = endpoint, body = payload }
+      if payload then return { id = 52, in_reply_to_id = 42 } end
+      return { id = 42, in_reply_to_id = vim.NIL,
+        pull_request_url = "https://api.github.com/repos/owner/repo/pulls/7" }
+    end },
+  }, function()
+    provider.validate_reply(target, { reply = gl_reply })
+    provider.reply(target, { reply = gl_reply, body = body })
+    github.validate_reply(gh_target, { reply = gh_reply })
+    github.reply(gh_target, { reply = gh_reply, body = body })
+    eq(calls[1].endpoint, provider.mr_path(target) .. "/discussions/thread%2Fid")
+    eq(calls[2].endpoint, calls[1].endpoint .. "/notes")
+    eq(calls[2].body, { body = body })
+    eq(calls[3].endpoint, "repos/owner/repo/pulls/comments/42")
+    eq(calls[4].endpoint, "repos/owner/repo/pulls/7/comments/42/replies")
+    eq(calls[4].body, { body = body })
+  end)
+  eq(github.reply_target({ id = 42, notes = { { id = 43 } } }), nil)
+  raises(function() github.reply(gh_target, { reply = { note_id = "42", discussion_id = 42 } }) end,
+    "no valid GitHub")
+end)
+
+test("GitHub range discussions preserve their root ID for replies from any range line", function()
+  local github = require("review.providers.github")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/7"))
+  mocked({
+    { github, "pages", function()
+      return {
+        { id = 43, in_reply_to_id = 42, path = "code.lua", side = "RIGHT", line = 3,
+          commit_id = "head", body = "Reply" },
+        { id = 42, path = "code.lua", side = "RIGHT", start_side = "RIGHT", start_line = 2, line = 3,
+          commit_id = "head", body = "Root" },
+      }
+    end },
+  }, function()
+    local discussions = github.discussions(gh_target, refs, {})
+    eq(#discussions, 1); eq(discussions[1].notes[1].id, 42)
+    eq(github.reply_target(discussions[1]).note_id, 42)
+    local current = { head = "head", base = "base", file = { new_path = "code.lua" },
+      rows = { { new_line = 1 }, { new_line = 2 }, { new_line = 3 } } }
+    assert(require("review.threads").contains(discussions[1], current, 2))
+    assert(require("review.threads").contains(discussions[1], current, 3))
+  end)
+end)
+
+test("explicit submission previews reply context and publishes to the selected thread only", function()
+  local s = reply_fixture()
+  local reply = assert(provider.reply_target(s.data.discussions[1]))
+  reply.author, reply.body = "alice", "Original comment"
+  s.drafts = { drafts.new("My reply", vim.tbl_extend("force",
+    vim.deepcopy(s.data.discussions[1].notes[1].position), refs), "head", nil, reply) }
+  drafts.save(s.config, s.target, s.drafts)
+  local requests, choice, preview = {}, 1
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[choice]) end },
+    { ui, "document", function(_, lines) preview = table.concat(lines, "\n") end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "discussions", function() return s.data.discussions end },
+    { provider, "post", function() error("A reply must never create a new discussion") end },
+    { provider, "request", function(_, endpoint, body)
+      requests[#requests + 1] = { endpoint = endpoint, body = body }
+      if body then return { id = 201 } end
+      return { id = "new", notes = { { id = 101, system = false } } }
+    end },
+  }, function()
+    s:submit()
+    eq(#requests, 0); eq(#s.drafts, 1)
+    assert(preview:find("Reply to @alice", 1, true) and preview:find("> Original comment", 1, true))
+    assert(preview:find("My reply", 1, true))
+    choice = 2
+    s:submit()
+    eq(#requests, 2)
+    eq(requests[2].endpoint, provider.mr_path(target) .. "/discussions/new/notes")
+    eq(requests[2].body, { body = "My reply" })
+    eq(#s.drafts, 0); eq(#drafts.load(s.config, s.target), 0)
+  end)
+  s:close()
+end)
+
+test("missing or mismatched reply targets block publication before any write", function()
+  local s = reply_fixture()
+  local reply = assert(provider.reply_target(s.data.discussions[1]))
+  s.drafts = { drafts.new("My reply", vim.deepcopy(refs), "head", nil, reply) }
+  drafts.save(s.config, s.target, s.drafts)
+  local writes = 0
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[2]) end },
+    { ui, "document", function() end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "request", function(_, _, body)
+      if body then writes = writes + 1 end
+      return { id = "new", notes = { { id = 999 } } }
+    end },
+  }, function()
+    s.drafts[1].position.new_path, s.drafts[1].position.new_line = "code.lua", 3
+    s:submit()
+    eq(writes, 0); eq(s.submitting, false)
+    eq(s.drafts[1].status, nil)
+    eq(drafts.load(s.config, s.target)[1].reply, reply)
+    assert(s.error:find("no longer available", 1, true))
+  end)
+  s:close()
+  local github = require("review.providers.github")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/7"))
+  mocked({
+    { github, "request", function()
+      return { id = 42, pull_request_url = "https://api.github.com/repos/owner/repo/pulls/8" }
+    end },
+  }, function()
+    raises(function() github.validate_reply(gh_target, { reply = { discussion_id = 42, note_id = 42 } }) end,
+      "no longer available in this PR")
+  end)
+end)
+
+test("reply drafts remove nullable API fields before saving or previewing", function()
+  local s = reply_fixture()
+  s.data.discussions = { s.data.discussions[1] }
+  local p = s.data.discussions[1].notes[1].position
+  p.old_line, p.line_range = vim.NIL, vim.NIL
+  local save
+  mocked({
+    { ui, "compose", function(_, _, saved) save = saved end },
+    { ui, "document", function(_, lines)
+      local text = table.concat(lines, "\n")
+      assert(text:find("code.lua:3", 1, true) and not text:find("vim.NIL", 1, true))
+    end },
+    { vim.ui, "select", function(items, _, selected) selected(items[1]) end },
+    { provider, "reply", function() error("Unexpected publication") end },
+  }, function()
+    vim.api.nvim_win_set_cursor(s.viewer_win, { 5, 0 })
+    s:reply()
+    assert(save)
+    save("Reply with a nullable API position")
+    eq(s.drafts[1].position.line_range, nil)
+    eq(s.drafts[1].position.old_line, nil)
+    eq(p.line_range, vim.NIL) -- Cleaning a draft must not mutate provider metadata.
+    s:submit()
+    eq(#s.drafts, 1)
+  end)
+  s:close()
+end)
+
+test("legacy JSON null fields reload safely and preserve single-line and range publication", function()
+  local s = reply_fixture()
+  local null = vim.NIL
+  local new = vim.tbl_extend("force", refs, {
+    position_type = "text", old_path = "code.lua", new_path = "code.lua",
+    old_line = null, new_line = 3, line_range = null,
+  })
+  local old = vim.tbl_extend("force", refs, {
+    position_type = "text", old_path = "code.lua", new_path = "code.lua",
+    old_line = 3, new_line = null, line_range = null,
+  })
+  local ranged = vim.deepcopy(old)
+  ranged.line_range = {
+    start = { old_line = 2, new_line = null, type = "old" },
+    ["end"] = { old_line = 3, new_line = null, type = "old" },
+  }
+  local list = {
+    { id = "new", body = "New-side draft", position = new, display = null, reply = null, status = null },
+    { id = "old", body = "Old-side draft", position = old, display = null, reply = null },
+    { id = "range", body = "Range reply", position = ranged, display = null,
+      reply = { discussion_id = "old", note_id = 102, author = "carol", body = "Original comment" } },
+  }
+  -- Simulate existing files written before nullable fields were normalized.
+  drafts.save(s.config, s.target, list)
+  s.drafts = drafts.load(s.config, s.target)
+  eq(#s.drafts, 3)
+  eq(s.drafts[1].reply, nil); eq(s.drafts[1].display, nil); eq(s.drafts[1].position.line_range, nil)
+  eq(s.drafts[2].position.new_line, nil)
+  eq(s.drafts[3].position.line_range.start.new_line, nil)
+  local posts, replies, choice = {}, {}, 1
+  mocked({
+    { vim, "notify", function() end },
+    { ui, "document", function(_, lines)
+      local text = table.concat(lines, "\n")
+      assert(text:find("code.lua:2–3", 1, true) and not text:find("vim.NIL", 1, true))
+    end },
+    { vim.ui, "select", function(items, _, selected) selected(items[choice]) end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "discussions", function() return {} end },
+    { provider, "validate_reply", function(_, draft) eq(draft.reply.note_id, 102) end },
+    { provider, "post", function(_, draft)
+      posts[#posts + 1] = vim.deepcopy(draft)
+      return { id = "posted" }
+    end },
+    { provider, "reply", function(_, draft)
+      replies[#replies + 1] = vim.deepcopy(draft)
+      return { id = 201 }
+    end },
+  }, function()
+    ui.comments(s)
+    s:submit()
+    eq(#posts, 0); eq(#replies, 0); eq(#s.drafts, 3)
+    choice = 2
+    s:submit()
+    eq(#posts, 2); eq(#replies, 1)
+    eq(posts[1].position.new_line, 3); eq(posts[1].position.old_line, nil)
+    eq(posts[2].position.old_line, 3); eq(posts[2].position.new_line, nil)
+    eq(replies[1].position.line_range.start.old_line, 2)
+    eq(#s.drafts, 0); eq(#drafts.load(s.config, s.target), 0)
+  end)
+  s:close()
+end)
+
+test("partial reply publication preserves the remaining target and blocks ambiguous retry", function()
+  local s = reply_fixture()
+  s.drafts = {}
+  for _, index in ipairs({ 1, 2 }) do
+    local reply = assert(provider.reply_target(s.data.discussions[index]))
+    local p = vim.tbl_extend("force", vim.deepcopy(s.data.discussions[index].notes[1].position), refs)
+    s.drafts[#s.drafts + 1] = drafts.new("Reply " .. index, p, "head", nil, reply)
+  end
+  drafts.save(s.config, s.target, s.drafts)
+  local writes = 0
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[2]) end },
+    { ui, "document", function() end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "request", function(_, endpoint, body)
+      if not body then
+        local id = endpoint:match("/discussions/(.+)$")
+        return { id = id, notes = { { id = id == "new" and 101 or 102 } } }
+      end
+      writes = writes + 1
+      if writes == 2 then error("Simulated reply connection loss") end
+      return { id = 201 }
+    end },
+  }, function()
+    s:submit()
+    eq(writes, 2); eq(#s.drafts, 1); eq(s.submitting, false)
+    eq(s.drafts[1].reply.discussion_id, "old")
+    eq(s.drafts[1].reply.note_id, 102)
+    eq(s.drafts[1].status, "uncertain")
+    eq(drafts.load(s.config, s.target), s.drafts)
+    s:submit()
+    eq(writes, 2)
+  end)
+  s:close()
+end)
+
 vim.fn.delete(root, "rf")
 print(("%d passed, %d failed"):format(passed, failed))
 if failed > 0 then vim.cmd("cquit 1") end

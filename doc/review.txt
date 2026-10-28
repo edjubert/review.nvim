@@ -43,6 +43,12 @@ COMMANDS
     Draft a comment on the current diff line or a visual line selection.
     Ctrl-S or :w in the comment editor saves locally. q cancels.
 
+:ReviewReply                                                  *:ReviewReply*
+    Draft a reply to an existing discussion on the current diff line.
+    Any line in a commented range works. Select a discussion when several
+    cover the line. Ctrl-S or :w saves locally; :ReviewSubmit publishes
+    only after explicit confirmation. Supported on GitLab and GitHub.
+
 :ReviewDrafts                                                *:ReviewDrafts*
     Inspect, edit or delete local drafts.
 
@@ -78,6 +84,7 @@ MAPPINGS
 
 Panel: <CR> opens the selected commit or file.
 Diff: <leader>rc drafts a comment in normal or visual mode (configurable).
+      <leader>rR drafts a reply to a discussion on this line (configurable).
 Both: ]c/[c next/previous commit; ]f/[f next/previous file;
       ]h/[h next/previous change block in the current file (counts supported);
       gA complete MR/PR; gd local drafts;
@@ -138,6 +145,23 @@ The toggle is scoped to the open review and survives navigation and refresh.
 Set keymaps.toggle_comments to a custom shortcut or false to disable it.
 Customize ReviewCommentBorder, ReviewCommentAuthor and ReviewCommentBody.
 
+REPLIES                                                      *review-replies*
+
+:ReviewReply or <leader>rR opens a Markdown reply editor for the discussion
+attached to the cursor line. Any line in a commented range works. When several
+discussions cover the line, a selector shows their authors and messages.
+
+Replies are persistent local drafts. Ctrl-S or :w saves locally; q cancels.
+:ReviewDrafts edits/deletes replies, and the diff labels them as "local reply".
+:ReviewSubmit previews the original comment and reply before publication.
+It checks the diff refs and verifies that the original comment still exists.
+Failures retain drafts; uncertain outcomes block automatic retries.
+
+GitLab adds a note to the existing MR discussion. GitHub replies to the
+top-level PR review comment. Codeberg reply drafts are not supported.
+Replies do not approve a review or change discussion resolution.
+Set keymaps.reply to a custom shortcut or false to disable the mapping.
+
 ==============================================================================
 CONFIGURATION                                                  *review-setup*
 
@@ -151,6 +175,7 @@ CONFIGURATION                                                  *review-setup*
         refresh = "<leader>rr",
         info = "<leader>ri",
         toggle_comments = "<leader>rt",
+        reply = "<leader>rR",
       }, -- false disables a mapping
       clone_protocol = "ssh",
       repo = nil,
