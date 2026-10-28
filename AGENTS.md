@@ -8,7 +8,10 @@
 - Comments are local drafts. Saving or editing never publishes.
 - Only explicit `:ReviewSubmit` publication may call write endpoints.
 - Never publish a real comment, resolve a thread, or send a message during development.
-- Never read tokens from configuration files; use authenticated `glab` or `gh` commands.
+- Never read tokens from configuration files; use authenticated `glab`/`gh`
+  commands, or `CODEBERG_TOKEN` from the environment for Codeberg.
+- Pass Codeberg credentials to curl through stdin, never process arguments,
+  shell commands or temporary files. Send them only to https://codeberg.org.
 - Verify line/range mappings and failure behavior with mocked write transports.
 - Tests: `nvim --headless -u NONE -i NONE -l tests/run.lua`.
 - Keep documentation aligned with implemented commands and supported providers.

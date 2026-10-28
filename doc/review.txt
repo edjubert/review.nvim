@@ -1,15 +1,16 @@
-*review.txt*   Commit-by-commit merge request review
+*review.txt*   Commit-by-commit merge/pull request review
 
 ==============================================================================
 INTRODUCTION                                                     *review.nvim*
 
-review.nvim opens a GitLab MR or GitHub PR URL, lists its commits, and renders
-read-only inline diffs with selectable additions and deletions.
+review.nvim opens a GitLab MR, GitHub PR or Codeberg PR URL, lists its commits,
+and renders read-only inline diffs with selectable additions and deletions.
 Comment drafts are local until explicit publication.
 
-Requires Neovim 0.11+, git, and the authenticated CLI for the review host:
-glab for GitLab, gh for GitHub. The other provider's CLI is optional.
-GitLab and GitHub Enterprise Server hosts are supported.
+Requires Neovim 0.11+, git, and the API client for the review host:
+authenticated glab for GitLab, authenticated gh for GitHub, curl for Codeberg.
+Other providers' clients are optional. GitLab and GitHub Enterprise Server
+hosts are supported. Codeberg support is limited to https://codeberg.org.
 
 Authenticate with glab auth login --hostname <host> for GitLab, or
 gh auth login --hostname <host> for GitHub. Check credentials with auth status.
@@ -17,12 +18,21 @@ No interactive login session needs to stay open. The plugin delegates API
 requests to the CLI and never reads credential files itself.
 Git fetching uses your Git credentials separately (SSH by default).
 
+For Codeberg, create a token in https://codeberg.org/user/settings/applications
+and set CODEBERG_TOKEN in the environment inherited by Neovim. Use repository
+access (read:repository for private reads, write:repository for publication).
+Public API reads need no token. curl sends the token through stdin, never
+process arguments or temporary files; credential files are not read.
+CODEBERG_TOKEN authenticates API requests, not Git fetches.
+Use clone_protocol = "https" for anonymous Git access to public repositories.
+
 ==============================================================================
 COMMANDS
 
 :Review [url]                                                       *:Review*
-    Open a GitLab MR or GitHub PR in a new tab. Without an argument, prompt
-    for its URL. The URL selects the provider automatically.
+    Open a GitLab MR, GitHub PR or Codeberg PR in a new tab. Without an
+    argument, prompt for its URL. The URL selects the provider automatically.
+    Codeberg URLs use https://codeberg.org/owner/repo/pulls/123.
 
 :[range]ReviewComment                                        *:ReviewComment*
     Draft a comment on the current diff line or a visual line selection.
@@ -47,6 +57,8 @@ COMMANDS
     Show the exact drafts, then request explicit publication.
     If the review's diff refs changed, drafts remain local.
     GitHub drafts publish as PR review comments; no approval is submitted.
+    Codeberg drafts publish as COMMENT reviews; no approval is submitted.
+    Finish or discard a pending Codeberg browser review before submitting.
 
 :ReviewClose                                                  *:ReviewClose*
     Close the review tab.
@@ -112,6 +124,15 @@ GitHub's REST API does not expose a discussion's resolved state. Outdated
 comments are labeled. PRs with more than 3000 changed files are rejected
 because the files API cannot return a complete list. Commit lists above 250
 entries use the paginated comparison API with a matching PR commit count.
+
+Codeberg uses old_position/new_position for the first selected line and
+extra_lines_count for a range. Each local draft creates one COMMENT review.
+Codeberg can include existing pending browser comments when creating a review;
+the plugin checks for a pending review before sending each draft. If one exists,
+local drafts remain saved until the browser review is finished or discarded.
+Review comments appear individually with resolved/stale indicators when exposed.
+Comments whose commit cannot be matched to the current diff remain readable in
+:ReviewThreads without an inline marker.
 
 GitLab's discussion card can show up to 16 diff lines ending at the comment's
 last line. The range shown below the excerpt is the actual commented range.

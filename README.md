@@ -6,39 +6,44 @@
 
 Repository: [edjubert/review.nvim](https://github.com/edjubert/review.nvim).
 
-Read GitLab merge requests and GitHub pull requests commit by commit, view each
-file as an inline diff, and draft comments on a line or a line range in Neovim.
+Read GitLab merge requests and GitHub or Codeberg pull requests commit by commit,
+view each file as an inline diff, and draft comments on a line or a line range
+in Neovim.
 
-- Open a GitLab MR or GitHub PR URL, including `/commits`, `/diffs` or `/files`.
+- Open a GitLab MR, GitHub PR or Codeberg PR URL, including commit/file subpages.
 - Browse the exact commit list, oldest first.
 - Switch between individual commits and the complete MR/PR.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
 - Select deleted lines as well as added lines.
 - Save, edit and delete persistent local comment drafts.
-- Preview and explicitly publish drafts as inline discussions on GitLab or GitHub.
+- Preview and explicitly publish drafts as inline discussions on GitLab, GitHub
+  or Codeberg.
 - Read existing discussions for the current file.
 - Refresh the open review without losing local drafts.
 
-The URL selects the provider automatically. GitLab, self-hosted GitLab, GitHub
-and GitHub Enterprise Server use the same UI and shortcuts.
+The URL selects the provider automatically. GitLab, self-hosted GitLab, GitHub,
+GitHub Enterprise Server and Codeberg use the same UI and shortcuts.
 Provider code lives in `lua/review/providers/`.
 
 ## Requirements
 
 - Neovim 0.11+.
 - `git`.
-- An authenticated CLI for the provider you use:
+- The API client for the provider you use:
   [`glab`](https://gitlab.com/gitlab-org/cli) for GitLab,
-  [`gh`](https://cli.github.com/) for GitHub.
+  [`gh`](https://cli.github.com/) for GitHub, or [`curl`](https://curl.se/) for Codeberg.
+  GitLab and GitHub need an authenticated CLI. Codeberg needs `CODEBERG_TOKEN`
+  for private repositories or publication.
 - Git access to the repository (SSH by default).
 
 ### Authentication
 
-| Provider | CLI | API used for publication |
-| --- | --- | --- |
-| GitLab | `glab` | MR discussions |
-| GitHub | `gh` | PR review comments |
+| Provider | Client | Authentication | API used for publication |
+| --- | --- | --- | --- |
+| GitLab | `glab` | `glab auth login` | MR discussions |
+| GitHub | `gh` | `gh auth login` | PR review comments |
+| Codeberg | `curl` | `CODEBERG_TOKEN` environment variable | Forgejo PR reviews, `COMMENT` event |
 
 Authenticate once for the host in the review URL. For GitLab:
 
@@ -58,10 +63,29 @@ For GitHub Enterprise Server, replace `github.com` with your instance's hostname
 The selected CLI must have valid credentials and permission to read the
 repository and publish comments. No interactive login session needs to stay open.
 
-The plugin delegates API requests to `glab api` or `gh api`; it never reads
-their credential files or requires a token in your Neovim configuration.
-Only the selected provider's CLI is required. Git fetching uses your Git
-credentials separately (SSH keys by default).
+For Codeberg, create a personal access token in
+[Settings → Applications](https://codeberg.org/user/settings/applications).
+Give it repository access (`read:repository` for private reads,
+`write:repository` for publication), then expose it as `CODEBERG_TOKEN` in the
+environment inherited by Neovim. For example, in Bash:
+
+```bash
+read -r -s -p "Codeberg token: " CODEBERG_TOKEN
+printf '\n'
+export CODEBERG_TOKEN
+nvim
+```
+
+The token is optional for public API reads. To fetch a public repository without
+SSH credentials, configure `clone_protocol = "https"`.
+
+The plugin delegates GitLab/GitHub API requests to `glab api` or `gh api`.
+Codeberg uses `curl` against `https://codeberg.org/api/v1`; its token is passed
+through stdin rather than command-line arguments or temporary files. The plugin
+never reads credential files or requires a token in your Neovim configuration.
+Only the selected provider's client is required. Git fetching uses your Git
+credentials separately (SSH keys by default); `CODEBERG_TOKEN` authenticates the
+API, not Git fetches.
 
 ## Installation
 
@@ -93,6 +117,7 @@ require("review").setup({})
 ```vim
 :Review https://gitlab.example.com/group/project/-/merge_requests/123
 :Review https://github.com/owner/repo/pull/123
+:Review https://codeberg.org/owner/repo/pulls/123
 ```
 
 Or use `:Review` to enter one URL interactively. A new tab contains the commit/file
@@ -105,13 +130,14 @@ does not switch branches or change working files. Otherwise it fetches into a
 bare repository in Neovim's cache directory.
 
 The commit list and the comparison base come from the provider rather than a
-possibly stale local `origin/main`. GitHub comparisons use the PR's merge base.
+possibly stale local `origin/main`. GitHub and Codeberg comparisons use the PR's
+merge base.
 
 ### Commands
 
 | Command | Action |
 | --- | --- |
-| `:Review [url]` | Open a GitLab MR or GitHub PR |
+| `:Review [url]` | Open a GitLab MR, GitHub PR or Codeberg PR |
 | `:ReviewComment` | Compose a local draft on the current line |
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
 | `:ReviewDrafts` | Inspect, edit or delete local drafts |
@@ -205,6 +231,15 @@ for deleted lines, `RIGHT` for added/current lines). Ranges also include
 `start_line` and `start_side`. Each submitted draft creates one published
 review comment; submitting does not approve a PR or request changes.
 
+On Codeberg, each draft creates a Forgejo review with the `COMMENT` event.
+The first selected line is sent as `old_position` or `new_position`; ranges use
+`extra_lines_count` for the following lines. Submitting does not approve a PR
+or request changes.
+
+Codeberg can include existing browser drafts when submitting a review. The plugin
+checks for a pending review before sending each draft and leaves its local drafts
+saved if one exists. Finish or discard that pending review on Codeberg first.
+
 ## Configuration
 
 ```lua
@@ -224,7 +259,8 @@ require("review").setup({
 
 ## Current scope
 
-- GitLab and GitHub, including their self-hosted instances.
+- GitLab and GitHub, including their self-hosted instances, plus `codeberg.org`.
+  Other Forgejo/Gitea hosts are not supported by the Codeberg provider.
 - Text files; binary files display a notice.
 - Commit diffs compare against the first parent. Root commits are not supported.
 - Discussion reading and new comments; replies/resolution are not implemented.
@@ -234,6 +270,11 @@ require("review").setup({
   use the paginated comparison API and must match the PR's commit count.
 - GitHub discussions use the REST review-comments API. Outdated comments are
   labeled; the resolved/unresolved state is not exposed by this API.
+- Codeberg paginates commits, files and reviews using the server's page size and
+  result counts. Inline positions come from the PR's full raw diff.
+- Codeberg displays review comments individually, including resolved/stale
+  indicators when exposed by the API. Comments whose commit cannot be matched
+  to the current diff remain readable in `:ReviewThreads` without an inline marker.
 - The inline view contains selectable deleted lines; it does not depend on
   `diffview.nvim` or `inline-diff.nvim`.
 

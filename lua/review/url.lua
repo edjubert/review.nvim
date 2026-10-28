@@ -9,7 +9,7 @@ end
 function M.parse(raw_url)
   local scheme, host, path = raw_url:match("^(https?)://([^/]+)(/[^?#]*)")
   if not scheme or not host:match("^[%w%.%-]+:?%d*$") or host:find("@", 1, true) then
-    return nil, "Expected an HTTP(S) GitLab MR or GitHub PR URL."
+    return nil, "Expected a GitLab MR, GitHub PR or Codeberg PR URL."
   end
   local project, iid, suffix = path:match("^/(.-)/%-/merge_requests/(%d+)(.*)$")
   local provider, review_path = "gitlab", "/-/merge_requests/"
@@ -17,8 +17,13 @@ function M.parse(raw_url)
     project, iid, suffix = path:match("^/([^/]+/[^/]+)/pull/(%d+)(.*)$")
     provider, review_path = "github", "/pull/"
   end
+  if not project and host:lower() == "codeberg.org" then
+    if scheme ~= "https" then return nil, "Codeberg review URLs must use HTTPS." end
+    project, iid, suffix = path:match("^/([^/]+/[^/]+)/pulls/(%d+)(.*)$")
+    provider, review_path = "codeberg", "/pulls/"
+  end
   if not project or (suffix ~= "" and suffix:sub(1, 1) ~= "/") or tonumber(iid) < 1 then
-    return nil, "Expected a GitLab /-/merge_requests/123 or GitHub /pull/123 URL."
+    return nil, "Expected GitLab /-/merge_requests/123, GitHub /pull/123 or Codeberg /pulls/123."
   end
   project = project:gsub("%%(%x%x)", function(hex) return string.char(tonumber(hex, 16)) end)
   for part in project:gmatch("[^/]+") do
@@ -29,8 +34,8 @@ function M.parse(raw_url)
   if project == "" or project:find("//", 1, true) or project:find("%%") then
     return nil, "Invalid project path."
   end
-  if provider == "github" and not project:match("^[^/]+/[^/]+$") then
-    return nil, "Expected a GitHub owner/repository path."
+  if provider ~= "gitlab" and not project:match("^[^/]+/[^/]+$") then
+    return nil, "Expected an owner/repository path."
   end
   return {
     provider = provider,

@@ -23,7 +23,7 @@ function M.open(raw_url)
     vim.notify("review requires Neovim 0.11 or newer.", vim.log.levels.ERROR); return
   end
   if not raw_url or raw_url == "" then
-    vim.ui.input({ prompt = "GitLab MR / GitHub PR URL: " }, function(value) if value then M.open(value) end end)
+    vim.ui.input({ prompt = "GitLab MR / GitHub PR / Codeberg PR URL: " }, function(value) if value then M.open(value) end end)
     return
   end
   local target, err = require("review.url").parse(raw_url)
@@ -63,7 +63,7 @@ end
 
 function M._commands()
   vim.api.nvim_create_user_command("Review", function(args) M.open(args.args) end,
-    { nargs = "?", desc = "Open a GitLab MR or GitHub PR URL" })
+    { nargs = "?", desc = "Open a GitLab MR, GitHub PR or Codeberg PR URL" })
   vim.api.nvim_create_user_command("ReviewComment", function(args) M.comment(args.line1, args.line2) end,
     { range = true, desc = "Create a local comment draft on a line or range" })
   vim.api.nvim_create_user_command("ReviewDrafts", function() if M.session then M.session:show_drafts() end end,

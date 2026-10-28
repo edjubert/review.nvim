@@ -368,6 +368,7 @@ function Session:submit()
             if not position.same_refs(draft.position, current_mr.diff_refs) then
               error("The review changed during submission. Remaining drafts stay local.", 0)
             end
+            if self.provider.validate_submission then self.provider.validate_submission(self.target, draft) end
             draft.status = "sending"
             drafts.save(self.config, self.target, self.drafts)
             local ok, response = pcall(self.provider.post, self.target, draft)
