@@ -2,6 +2,7 @@ local async = require("review.async")
 local url = require("review.url")
 local position = require("review.position")
 local threads = require("review.threads")
+local status = require("review.status")
 local M = { name = "GitHub", cli = "gh", kind = "PR", label = "pull request", prefix = "#" }
 
 function M.head_ref(target)
@@ -82,6 +83,59 @@ end
 
 function M.current(target)
   return with_refs(target, M.request(target, M.pr_path(target)))
+end
+
+function M.status(target, pr)
+  return {
+    pipeline = status.read(function()
+      local endpoint = M.repo_path(target) .. "/commits/" .. url.encode(pr.diff_refs.head_sha)
+      local combined = M.request(target, endpoint .. "/status")
+      local states = {}
+      if (combined.total_count or 0) > 0 then states[#states + 1] = combined.state or "unknown" end
+      local count = 0
+      for page = 1, 1000 do
+        local checks = M.request(target, endpoint .. "/check-runs?per_page=100&page=" .. page)
+        if type(checks) ~= "table" or type(checks.check_runs) ~= "table"
+            or not vim.islist(checks.check_runs) or type(checks.total_count) ~= "number" then
+          error("GitHub returned an invalid check run list.", 0)
+        end
+        for _, check in ipairs(checks.check_runs) do
+          states[#states + 1] = check.status == "completed" and
+            (type(check.conclusion) == "string" and check.conclusion or "unknown") or check.status or "unknown"
+        end
+        count = count + #checks.check_runs
+        if count >= checks.total_count then return { state = status.pipeline(states) } end
+        if #checks.check_runs == 0 then break end
+      end
+      error("GitHub returned an incomplete check run list.", 0)
+    end),
+    review = status.read(function()
+      return status.reviews(M.pages(target, M.pr_path(target) .. "/reviews"))
+    end),
+  }
+end
+
+local function decision(target, refs, event, body)
+  local result = M.request(target, M.pr_path(target) .. "/reviews", {
+    event = event, commit_id = refs.head_sha, body = body or "",
+  })
+  local expected = event == "APPROVE" and "APPROVED" or "CHANGES_REQUESTED"
+  if type(result) ~= "table" or not result.id or result.state ~= expected
+      or result.commit_id ~= refs.head_sha then
+    error("GitHub did not confirm the review decision. Check the PR before retrying.", 0)
+  end
+  return result
+end
+
+function M.approve(target, refs)
+  return decision(target, refs, "APPROVE")
+end
+
+M.request_changes_requires_body = true
+
+function M.request_changes(target, refs, body)
+  if type(body) ~= "string" or vim.trim(body) == "" then error("Request changes requires a summary.", 0) end
+  return decision(target, refs, "REQUEST_CHANGES", body)
 end
 
 local function number(value)

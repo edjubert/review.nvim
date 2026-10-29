@@ -2,13 +2,14 @@ local async = require("review.async")
 local url = require("review.url")
 local position = require("review.position")
 local patches = require("review.providers.codeberg_diff")
+local status = require("review.status")
 local M = { name = "Codeberg", cli = "curl", kind = "PR", label = "pull request", prefix = "#" }
 local page_size
 
 local function token(required)
   local value = vim.env.CODEBERG_TOKEN
   if not value or value == "" then
-    if required then error("Set CODEBERG_TOKEN in Neovim's environment to publish Codeberg comments.", 0) end
+    if required then error("Set CODEBERG_TOKEN in Neovim's environment to publish Codeberg reviews.", 0) end
     return nil
   end
   if value:find("[%c]") then error("CODEBERG_TOKEN contains invalid control characters.", 0) end
@@ -262,6 +263,46 @@ function M.validate_submission(target)
       error("Finish or discard your pending Codeberg review before submitting. Local drafts remain saved.", 0)
     end
   end
+end
+
+M.validate_request_changes = M.validate_submission
+
+function M.status(target, pr)
+  return {
+    pipeline = status.read(function()
+      local result = M.request(target, M.repo_path(target) .. "/commits/" .. pr.diff_refs.head_sha .. "/status")
+      return { state = (result.total_count or 0) > 0 and status.pipeline({ result.state or "unknown" }) or "none" }
+    end),
+    review = status.read(function()
+      return status.reviews(M.pages(target, M.pr_path(target) .. "/reviews", true))
+    end),
+  }
+end
+
+local function decision(target, refs, event, body)
+  local result = M.request(target, M.pr_path(target) .. "/reviews", {
+    event = event, commit_id = refs.head_sha, body = body or "",
+    comments = {},
+  })
+  if type(result) ~= "table" or not result.id or result.state ~= event or result.comments_count ~= 0
+      or result.commit_id ~= refs.head_sha then
+    error("Codeberg did not confirm the review decision. Check the PR before retrying.", 0)
+  end
+  return result
+end
+
+function M.approve(target, refs)
+  M.validate_submission(target)
+  return decision(target, refs, "APPROVED")
+end
+
+M.request_changes_requires_body = true
+
+function M.request_changes(target, refs, body)
+  if type(body) ~= "string" or vim.trim(body) == "" then error("Request changes requires a summary.", 0) end
+  -- Recheck immediately before writing: Forgejo can attach browser drafts.
+  M.validate_submission(target)
+  return decision(target, refs, "REQUEST_CHANGES", body)
 end
 
 function M.post(target, draft)

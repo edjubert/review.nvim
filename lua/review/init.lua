@@ -42,7 +42,7 @@ function M.open(raw_url)
     end
   end
   if M.session then
-    if M.session.submitting or M.session.approving then
+    if M.session.submitting or M.session.deciding then
       vim.notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
       return
     end
@@ -76,6 +76,14 @@ function M.approve()
     return
   end
   M.session:approve()
+end
+
+function M.request_changes()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:request_changes()
 end
 
 function M.reply()
@@ -132,7 +140,9 @@ function M._commands()
   vim.api.nvim_create_user_command("ReviewSubmit", function() if M.session then M.session:submit() end end,
     { desc = "Preview and explicitly publish local review comments" })
   vim.api.nvim_create_user_command("ReviewApprove", M.approve,
-    { desc = "Approve the open GitLab merge request" })
+    { desc = "Approve the open MR/PR" })
+  vim.api.nvim_create_user_command("ReviewRequestChanges", M.request_changes,
+    { desc = "Request changes on the open MR/PR without submitting local drafts" })
   vim.api.nvim_create_user_command("ReviewClose", function() if M.session then M.session:close() end end,
     { desc = "Close the review tab" })
 end

@@ -28,6 +28,12 @@ local sha1 = require("review.sha1")
 local drafts = require("review.drafts")
 local git = require("review.git")
 local provider = require("review.providers.gitlab")
+local actual_gitlab_status = provider.status
+-- Existing fixtures simulate comments/diffs; status-specific tests below use
+-- the real method with mocked API responses. Never contact a live status API.
+provider.status = function()
+  return { pipeline = { state = "none" }, review = { state = "pending", approvals = 0, reviewers = {} } }
+end
 local Session = require("review.session")
 local ui = require("review.ui")
 local emoji = require("review.emoji")
@@ -1425,6 +1431,419 @@ test("partial reply publication preserves the remaining target and blocks ambigu
   s:close()
 end)
 
+test("pipeline aggregation keeps failures and pending checks ahead of successful checks", function()
+  local status = require("review.status")
+  eq(status.pipeline({}), "none")
+  eq(status.pipeline({ "success", "in_progress" }), "running")
+  eq(status.pipeline({ "success", "pending" }), "pending")
+  eq(status.pipeline({ "running", "timed_out", "success" }), "failed")
+  eq(status.pipeline({ "success", "unexpected" }), "unknown")
+  eq(status.pipeline({ "neutral", "success" }), "success")
+end)
+
+test("review decisions preserve approvals across comments and clear dismissed decisions", function()
+  local status = require("review.status")
+  local function review(user, state, extra)
+    return vim.tbl_extend("force", { user = { login = user }, state = state }, extra or {})
+  end
+  local result = status.reviews({
+    review("alice", "APPROVED"), review("alice", "COMMENTED"),
+    review("bob", "CHANGES_REQUESTED"), review("bob", "PENDING"),
+  })
+  eq(result.state, "changes_requested"); eq(result.approvals, 1)
+  eq(result.reviewers[1].state, "approved")
+  result = status.reviews({
+    review("alice", "CHANGES_REQUESTED"), review("alice", "APPROVED"),
+    review("bob", "CHANGES_REQUESTED"), review("bob", "DISMISSED"),
+    review("carol", "APPROVED", { stale = true }),
+  })
+  eq(result.state, "approved"); eq(result.approvals, 1)
+  eq(result.reviewers[2].state, "pending"); eq(result.reviewers[3].stale, true)
+end)
+
+test("GitLab status combines the MR pipeline, approval rules and requested changes", function()
+  mocked({
+    { provider, "request", function(_, endpoint, body)
+      eq(body, nil); eq(endpoint, provider.mr_path(target) .. "/approvals")
+      return { approved = true, approvals_required = 2,
+        approved_by = { { user = { username = "alice" } } } }
+    end },
+    { provider, "pages", function(_, endpoint)
+      eq(endpoint, provider.mr_path(target) .. "/reviewers")
+      return { { user = { username = "bob" }, state = "requested_changes" } }
+    end },
+  }, function()
+    local result = actual_gitlab_status(target, {
+      head_pipeline = { id = 21, status = "running" }, diff_refs = refs,
+    })
+    eq(result.pipeline.state, "running"); eq(result.pipeline.id, 21)
+    eq(result.review.state, "changes_requested"); eq(result.review.approvals, 1)
+    eq(result.review.required, 2); eq(result.review.reviewers[1].username, "alice")
+    eq(result.review.reviewers[2].state, "changes_requested")
+    result = actual_gitlab_status(target, { head_pipeline = vim.NIL })
+    eq(result.pipeline.state, "none")
+  end)
+  mocked({ { provider, "request", function() error("Missing permission") end } }, function()
+    local result = actual_gitlab_status(target, { head_pipeline = { status = "success" } })
+    eq(result.pipeline.state, "success"); eq(result.review.state, "unknown")
+  end)
+end)
+
+test("GitHub status includes all check run pages and decisive reviews", function()
+  local github, checks = require("review.providers.github"), 0
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  mocked({
+    { github, "request", function(_, endpoint)
+      assert(endpoint:find("/commits/head/", 1, true))
+      if endpoint:find("/status", 1, true) then return { total_count = 1, state = "success" } end
+      checks = checks + 1
+      if checks == 1 then
+        local list = {}
+        for i = 1, 100 do list[i] = { status = "completed", conclusion = "success" } end
+        return { total_count = 101, check_runs = list }
+      end
+      return { total_count = 101, check_runs = { { status = "in_progress", conclusion = vim.NIL } } }
+    end },
+    { github, "pages", function()
+      return { { user = { login = "alice" }, state = "APPROVED" } }
+    end },
+  }, function()
+    local result = github.status(gh_target, { diff_refs = refs })
+    eq(checks, 2); eq(result.pipeline.state, "running")
+    eq(result.review.state, "approved"); eq(result.review.approvals, 1)
+  end)
+end)
+
+test("Codeberg status uses commit statuses and ignores private pending reviews", function()
+  local codeberg = require("review.providers.codeberg")
+  local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/12"))
+  mocked({
+    { codeberg, "request", function(_, endpoint, body)
+      eq(body, nil); eq(endpoint, "repos/owner/repo/commits/head/status")
+      return { total_count = 2, state = "failure" }
+    end },
+    { codeberg, "pages", function(_, _, filtered)
+      eq(filtered, true)
+      return {
+        { user = { login = "alice" }, state = "REQUEST_CHANGES" },
+        { user = { login = "alice" }, state = "PENDING" },
+      }
+    end },
+  }, function()
+    local result = codeberg.status(cb_target, { diff_refs = refs })
+    eq(result.pipeline.state, "failed"); eq(result.review.state, "changes_requested")
+  end)
+end)
+
+test("the panel displays pipeline and review status without changing tree selection", function()
+  local s = reply_fixture()
+  s.data.status = {
+    pipeline = { state = "failed", id = 42 },
+    review = { state = "changes_requested", approvals = 1, required = 2,
+      reviewers = { { username = "alice", state = "approved" }, { username = "bob", state = "changes_requested" } } },
+  }
+  ui.panel(s)
+  local text = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), "\n")
+  assert(text:find("Pipeline: failed (#42)", 1, true))
+  assert(text:find("Review: changes requested · 1/2 approval(s)", 1, true))
+  assert(text:find("@bob · changes requested", 1, true))
+  for line, entry in pairs(s.panel_entries) do
+    assert(line > 6)
+    assert(entry.commit ~= nil or entry.file ~= nil)
+  end
+  s:close()
+end)
+
+test("GitLab GraphQL change requests use the explicit host and literal variables through stdin", function()
+  local async, captured = require("review.async"), {}
+  mocked({
+    { async, "checked", function(argv, opts)
+      captured[#captured + 1] = { argv = argv, body = vim.json.decode(opts.stdin) }
+      if #captured == 1 then
+        return '{"data":{"__type":{"fields":[{"name":"mergeRequestRequestChanges"}]}}}'
+      end
+      return '{"data":{"mergeRequestRequestChanges":{"errors":[],"mergeRequest":{"iid":"12"}}}}'
+    end },
+  }, function()
+    provider.validate_request_changes(target)
+    provider.request_changes(target)
+    eq(#captured, 2)
+    eq(captured[2].argv, { "glab", "api", "--hostname", target.host,
+      "--method", "POST", "graphql", "--input", "-" })
+    eq(captured[2].body.variables.input, { projectPath = target.project, iid = "12" })
+    assert(captured[1].body.query:find("__type", 1, true))
+    assert(captured[2].body.query:find("mergeRequestRequestChanges(input: $input)", 1, true))
+  end)
+end)
+
+test("GitLab rejects unsupported GraphQL mutations and unconfirmed change requests", function()
+  for _, response in ipairs({
+    { data = vim.NIL, errors = { { message = "Not supported" } } },
+    { data = { mergeRequestRequestChanges = { errors = { "Reviewer not found" }, mergeRequest = { iid = "12" } } } },
+    { data = { mergeRequestRequestChanges = { errors = {}, mergeRequest = { iid = "13" } } } },
+  }) do
+    mocked({ { provider, "request", function() return response end } }, function()
+      local ok = pcall(provider.request_changes, target)
+      eq(ok, false)
+    end)
+  end
+  mocked({ { provider, "request", function() return { data = { __type = { fields = {} } } } end } }, function()
+    raises(function() provider.validate_request_changes(target) end, "does not expose")
+  end)
+end)
+
+test("GitLab request changes capability accepts its cached full introspection schema", function()
+  mocked({
+    { provider, "request", function()
+      return { data = { __schema = { types = {
+        { name = "Query", fields = { { name = "project" } } },
+        { name = "Mutation", fields = { { name = "mergeRequestRequestChanges" } } },
+      } } } }
+    end },
+  }, function()
+    provider.validate_request_changes(target)
+  end)
+end)
+
+test("review decisions pin approval and request changes to the loaded revision", function()
+  local github, codeberg = require("review.providers.github"), require("review.providers.codeberg")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/12"))
+  local calls, validations = {}, 0
+  mocked({
+    { provider, "request", function(_, endpoint, body)
+      eq(endpoint, provider.mr_path(target) .. "/approve"); eq(body, { sha = "head" })
+      return {}
+    end },
+    { github, "request", function(_, endpoint, body)
+      eq(endpoint, github.pr_path(gh_target) .. "/reviews"); calls[#calls + 1] = body
+      return { id = 1, commit_id = body.commit_id, state = body.event == "APPROVE" and "APPROVED" or "CHANGES_REQUESTED" }
+    end },
+    { codeberg, "validate_submission", function() validations = validations + 1 end },
+    { codeberg, "request", function(_, endpoint, body)
+      eq(endpoint, codeberg.pr_path(cb_target) .. "/reviews"); calls[#calls + 1] = body
+      return { id = 1, state = body.event, comments_count = 0, commit_id = body.commit_id }
+    end },
+  }, function()
+    provider.approve(target, refs)
+    github.approve(gh_target, refs)
+    github.request_changes(gh_target, refs, "Fix the regression")
+    codeberg.approve(cb_target, refs)
+    codeberg.request_changes(cb_target, refs, "Fix the regression")
+    eq(calls[1].event, "APPROVE"); eq(calls[2].event, "REQUEST_CHANGES")
+    eq(calls[3].event, "APPROVED"); eq(calls[4].event, "REQUEST_CHANGES")
+    for _, call in ipairs(calls) do eq(call.commit_id, "head") end
+    eq(validations, 2)
+    raises(function() github.request_changes(gh_target, refs, "") end, "requires a summary")
+    raises(function() codeberg.request_changes(cb_target, refs, " ") end, "requires a summary")
+  end)
+end)
+
+test("standalone request changes requires confirmation and preserves local drafts", function()
+  local s, reads, writes, choice = reply_fixture(), 0, 0, 1
+  s:save_draft("Remain local", vim.tbl_extend("force", { old_path = "code.lua", new_path = "code.lua", new_line = 3 }, refs), "head")
+  local saved = vim.deepcopy(s.drafts)
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[choice]) end },
+    { provider, "current", function() reads = reads + 1; return { diff_refs = refs } end },
+    { provider, "validate_request_changes", function() end },
+    { provider, "request_changes", function(_, revision)
+      writes = writes + 1; eq(revision, refs)
+    end },
+    { provider, "post", function() error("Standalone decisions must not publish drafts") end },
+  }, function()
+    s:request_changes(); eq(reads, 0); eq(writes, 0)
+    choice = 2
+    s:request_changes(); eq(writes, 1); eq(s.deciding, false)
+    eq(s.drafts, saved); eq(drafts.load(s.config, s.target), saved)
+    eq(s.data.status.review.state, "pending")
+  end)
+  s:close()
+end)
+
+test("changed revisions and active operations prevent standalone review writes", function()
+  local s, writes = reply_fixture(), 0
+  mocked({
+    { vim, "notify", function() end },
+    { provider, "current", function() return { diff_refs = { head_sha = "new" } } end },
+    { provider, "approve", function() writes = writes + 1 end },
+    { provider, "request_changes", function() writes = writes + 1 end },
+    { provider, "validate_request_changes", function() error("Should not validate changed revisions") end },
+  }, function()
+    s:approve(); eq(writes, 0); eq(s.deciding, false)
+    s:decision("request_changes"); eq(writes, 0); eq(s.deciding, false)
+    s.deciding = true
+    s:approve(); eq(writes, 0)
+    s:close(); eq(s.closed, false)
+    s.deciding = false
+  end)
+  s:close()
+end)
+
+local function combined_fixture()
+  local s = reply_fixture()
+  s:save_draft("First comment",
+    vim.tbl_extend("force", { old_path = "code.lua", new_path = "code.lua", new_line = 3 }, refs), "head")
+  s:save_draft("Second comment",
+    vim.tbl_extend("force", { old_path = "code.lua", new_path = "code.lua", new_line = 4 }, refs), "head")
+  return s
+end
+
+test("combined submission requests changes only after all comments are confirmed", function()
+  local s, calls = combined_fixture(), {}
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[3]) end },
+    { ui, "document", function() end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "validate_request_changes", function() calls[#calls + 1] = "validate" end },
+    { provider, "post", function(_, draft) calls[#calls + 1] = draft.body; return { id = "ok" } end },
+    { provider, "request_changes", function()
+      eq(#s.drafts, 0); calls[#calls + 1] = "changes"
+    end },
+    { provider, "discussions", function() return {} end },
+  }, function()
+    s:submit()
+    eq(calls, { "validate", "First comment", "Second comment", "changes" })
+    eq(#drafts.load(s.config, s.target), 0); eq(s.submitting, false)
+  end)
+  s:close()
+end)
+
+test("unsupported request changes prevents combined comment publication", function()
+  local s, writes = combined_fixture(), 0
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[3]) end },
+    { ui, "document", function() end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "validate_request_changes", function() error("Unsupported server") end },
+    { provider, "post", function() writes = writes + 1 end },
+    { provider, "request_changes", function() writes = writes + 1 end },
+  }, function()
+    s:submit(); eq(writes, 0); eq(#s.drafts, 2); eq(s.submitting, false)
+  end)
+  s:close()
+end)
+
+test("partial publication never sends request changes or retries ambiguous comments", function()
+  local s, comments, decisions = combined_fixture(), 0, 0
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[3]) end },
+    { ui, "document", function() end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "validate_request_changes", function() end },
+    { provider, "post", function()
+      comments = comments + 1
+      if comments == 2 then error("Lost response") end
+      return { id = "ok" }
+    end },
+    { provider, "request_changes", function() decisions = decisions + 1 end },
+  }, function()
+    s:submit(); eq(comments, 2); eq(decisions, 0); eq(s.submitting, false)
+    eq(#s.drafts, 1); eq(s.drafts[1].status, "uncertain")
+    s:submit(); eq(comments, 2); eq(decisions, 0)
+  end)
+  s:close()
+end)
+
+test("an unconfirmed change request does not restore or republish successful comments", function()
+  local s, comments, decisions, notifications = combined_fixture(), 0, 0, {}
+  mocked({
+    { vim, "notify", function(message) notifications[#notifications + 1] = message end },
+    { vim.ui, "select", function(items, _, selected) selected(items[3]) end },
+    { ui, "document", function() end },
+    { provider, "current", function() return { diff_refs = refs } end },
+    { provider, "validate_request_changes", function() end },
+    { provider, "post", function() comments = comments + 1; return { id = "ok" } end },
+    { provider, "request_changes", function() decisions = decisions + 1; error("Lost response") end },
+  }, function()
+    s:submit(); eq(comments, 2); eq(decisions, 1); eq(#s.drafts, 0); eq(s.submitting, false)
+    eq(#drafts.load(s.config, s.target), 0)
+    assert(table.concat(notifications, "\n"):find("Published 2 comment(s); Request changes was not confirmed", 1, true))
+    s:submit(); eq(comments, 2); eq(decisions, 1)
+  end)
+  s:close()
+end)
+
+test("a new server revision during comment submission prevents the final change request", function()
+  local s, comments, decisions = combined_fixture(), 0, 0
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[3]) end },
+    { ui, "document", function() end },
+    { provider, "current", function()
+      return { diff_refs = comments == 2 and vim.tbl_extend("force", refs, { head_sha = "new" }) or refs }
+    end },
+    { provider, "validate_request_changes", function() end },
+    { provider, "post", function() comments = comments + 1; return { id = "ok" } end },
+    { provider, "request_changes", function() decisions = decisions + 1 end },
+  }, function()
+    s:submit()
+    eq(comments, 2); eq(decisions, 0); eq(#s.drafts, 0); eq(s.submitting, false)
+    assert(s.error:find("review changed", 1, true))
+  end)
+  s:close()
+end)
+
+test("GitHub and Codeberg summary cancellation prevents review publication", function()
+  local s, writes, choice = combined_fixture(), 0, nil
+  s.provider = vim.tbl_extend("force", provider, { request_changes_requires_body = true })
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[3] or items[2]) end },
+    { vim.ui, "input", function(_, entered) entered(choice) end },
+    { ui, "document", function() end },
+    { s.provider, "current", function() error("A cancelled summary must not read the API") end },
+    { s.provider, "request_changes", function() writes = writes + 1 end },
+    { s.provider, "post", function() writes = writes + 1 end },
+  }, function()
+    s:request_changes(); s:submit(); eq(writes, 0)
+    choice = " "
+    s:request_changes(); s:submit(); eq(writes, 0)
+    eq(#s.drafts, 2)
+  end)
+  s:close()
+end)
+
+test("GitHub and Codeberg reject review responses for a different commit", function()
+  for _, adapter in ipairs({ require("review.providers.github"), require("review.providers.codeberg") }) do
+    mocked({
+      { adapter, "validate_submission", function() end },
+      { adapter, "request", function(_, _, body)
+        return {
+          id = 1, commit_id = "different", comments_count = 0,
+          state = adapter.name == "GitHub" and "CHANGES_REQUESTED" or body.event,
+        }
+      end },
+    }, function()
+      raises(function() adapter.request_changes(target, refs, "Fix this regression") end, "did not confirm")
+    end)
+  end
+end)
+
+test("a failed status read after approval does not report a failed approval", function()
+  local s, writes, reads, notifications = reply_fixture(), 0, 0, {}
+  mocked({
+    { vim, "notify", function(message) notifications[#notifications + 1] = message end },
+    { provider, "current", function()
+      reads = reads + 1
+      if reads > 1 then error("Status connection lost") end
+      return { diff_refs = refs }
+    end },
+    { provider, "approve", function() writes = writes + 1 end },
+  }, function()
+    s:approve(); eq(writes, 1); eq(s.deciding, false)
+    eq(s.data.status.review.state, "unknown")
+    eq(s.error, nil)
+    assert(not table.concat(notifications, "\n"):find("not confirmed", 1, true))
+  end)
+  s:close()
+end)
+
+provider.status = actual_gitlab_status
 vim.fn.delete(root, "rf")
 print(("%d passed, %d failed"):format(passed, failed))
 if failed > 0 then vim.cmd("cquit 1") end

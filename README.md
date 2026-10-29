@@ -21,7 +21,8 @@ in Neovim.
 - Draft replies to existing GitLab and GitHub discussions from their diff lines.
 - Preview and explicitly publish drafts as inline discussions on GitLab, GitHub
   or Codeberg.
-- Approve the open GitLab merge request with an explicit command.
+- See the latest pipeline/check status and reviewer decisions in the panel.
+- Approve the open MR/PR or request changes with explicit commands.
 - Open the discussion under the cursor or browse all review discussions.
 - Toggle discussion messages and replies directly below their commented lines.
 - Jump from a discussion to its commented line.
@@ -51,9 +52,9 @@ Neovim configuration.
 
 | Provider | Client | Authentication | API used for publication |
 | --- | --- | --- | --- |
-| GitLab | `glab` | `glab auth login` | MR discussions and approvals |
-| GitHub | `gh` | `gh auth login` | PR review comments |
-| Codeberg | `curl` | `CODEBERG_TOKEN` environment variable | Forgejo PR reviews, `COMMENT` event |
+| GitLab | `glab` | `glab auth login` | MR discussions, approvals and GraphQL change requests |
+| GitHub | `gh` | `gh auth login` | PR review comments and review decisions |
+| Codeberg | `curl` | `CODEBERG_TOKEN` environment variable | Forgejo PR comments and review decisions |
 
 Authenticate once for the host in the review URL. For GitLab:
 
@@ -106,7 +107,8 @@ With lazy.nvim:
   "edjubert/review.nvim",
   cmd = {
     "Review", "ReviewInfo", "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
-    "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit", "ReviewApprove", "ReviewClose",
+    "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit",
+    "ReviewApprove", "ReviewRequestChanges", "ReviewClose",
   },
   opts = {},
 }
@@ -160,7 +162,8 @@ merge base.
 | `:ReviewToggleComments` | Show or hide discussion messages and replies inline |
 | `:ReviewRefresh` | Reload the review, commits, diffs and discussions |
 | `:ReviewSubmit` | Preview drafts and choose whether to publish |
-| `:ReviewApprove` | Approve the open GitLab merge request |
+| `:ReviewApprove` | Approve the open MR/PR without submitting local drafts |
+| `:ReviewRequestChanges` | Request changes on the open MR/PR without submitting local drafts |
 | `:ReviewClose` | Close the review tab |
 | `:checkhealth review` | Check dependencies |
 
@@ -221,6 +224,18 @@ Local drafts keep their original positions. If the review diff changed, publicat
 still requires choosing updated positions. A failed refresh keeps the previously
 loaded review available, and the command can also retry a failed initial load.
 
+### Pipeline and review status
+
+The panel shows the latest MR pipeline on GitLab, commit statuses and check runs
+on GitHub, and commit statuses on Codeberg. It also shows approvals, change
+requests and each reviewer's decision. GitLab includes its required approval
+count; GitHub and Codeberg show received decisions, which do not guarantee that
+all branch protection requirements are satisfied.
+
+Statuses are read when opening or refreshing a review and after submitting a
+decision or comments. Run `:ReviewRefresh` to fetch changes made on the server.
+Unavailable status endpoints display `unavailable` while the diff stays readable.
+
 ## Comments
 
 1. Put the cursor on a line, or select a range with `V`.
@@ -254,13 +269,33 @@ Run `:ReviewDrafts` or press `gd` to select a saved draft, then choose
 ### Preview before publication
 
 `:ReviewSubmit` opens a preview and asks whether to keep the drafts local or
-publish them. Choose `Keep local` to retain them without posting.
+publish them. Choose `Keep local` to retain them without posting, publish comments
+only, or publish them **and request changes**. The combined action requests changes
+only after every comment has been confirmed. If a comment fails, the change
+request is not sent and the remaining drafts stay local.
 
 ![Submission preview with the explicit Keep local or Publish confirmation](assets/screenshots/submission-preview.png)
 
-Run `:ReviewApprove` to approve the GitLab MR in the current review session.
-Approval is sent immediately and requires permission to approve that MR.
-GitHub and Codeberg approvals are not supported.
+### Approve or request changes
+
+Run `:ReviewApprove` to approve the MR/PR in the current session. Approval is sent
+immediately and requires the corresponding provider permission.
+
+Run `:ReviewRequestChanges` to request changes without publishing local drafts.
+The command asks for confirmation; GitHub and Codeberg also require a review
+summary. This action updates the remote review decision and does not push Git
+commits. The combined `:ReviewSubmit` action asks for the same summary when needed.
+
+Both actions check that the loaded review revision is still current. If it
+changed, run `:ReviewRefresh` and inspect the new diff first. GitLab uses the
+native `mergeRequestRequestChanges` GraphQL mutation. Older servers that do not
+expose it reject the action before the combined flow publishes comments. GitLab
+may also require you to be assigned as a reviewer; whether requesting changes
+blocks merging depends on the server's version, tier and project configuration.
+
+If comments were published but the change request could not be confirmed, those
+comments are not republished. Inspect the remote decision before retrying with
+`:ReviewRequestChanges`.
 
 ### Browse discussions
 
@@ -387,12 +422,14 @@ the actual comment range. The discussion API does not expose a context-size opti
 On GitHub, selections become review comments with `line` and `side` (`LEFT`
 for deleted lines, `RIGHT` for added/current lines). Ranges also include
 `start_line` and `start_side`. Each submitted draft creates one published
-review comment; submitting does not approve a PR or request changes.
+review comment. Publishing comments alone leaves the review decision unchanged;
+the combined submission then sends a separate `REQUEST_CHANGES` review.
 
 On Codeberg, each draft creates a Forgejo review with the `COMMENT` event.
 The first selected line is sent as `old_position` or `new_position`; ranges use
-`extra_lines_count` for the following lines. Submitting does not approve a PR
-or request changes.
+`extra_lines_count` for the following lines. Publishing comments alone leaves the
+review decision unchanged; the combined submission then sends a separate
+`REQUEST_CHANGES` review.
 
 Codeberg can include existing browser drafts when submitting a review. The plugin
 checks for a pending review before sending each draft and leaves its local drafts
@@ -426,6 +463,7 @@ require("review").setup({
   Other Forgejo/Gitea hosts are not supported by the Codeberg provider.
 - Text files; binary files display a notice.
 - Commit diffs compare against the first parent. Root commits are not supported.
+- Pipeline/check status, approval and change requests on all providers.
 - Discussion reading and new comments on all providers; replies on GitLab and
   GitHub. Codeberg reply drafts and discussion resolution are not implemented.
 - The provider must expose the file's diff to accept a positional comment.
@@ -448,8 +486,8 @@ require("review").setup({
 nvim --headless -u NONE -i NONE -l tests/run.lua
 ```
 
-The suite checks line mappings, positions, persistence, Git snapshot loading and
-publication behavior with a mocked GitLab transport. It never posts comments to
+The suite checks line mappings, positions, persistence, Git snapshot loading,
+status aggregation and publication/decision behavior with mocked transports. It never posts comments to
 a real service.
 
 An optional integration check reads a real MR/PR, renders every commit/file view,

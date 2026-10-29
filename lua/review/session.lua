@@ -40,12 +40,34 @@ function Session:load()
   self:refresh()
 end
 
+function Session:read_status(mr)
+  local ok, result = pcall(self.provider.status, self.target, mr)
+  if ok then return result end
+  return {
+    pipeline = { state = "unknown", error = tostring(result) },
+    review = { state = "unknown", error = tostring(result) },
+  }
+end
+
+function Session:update_status()
+  local ok, latest = pcall(self.provider.current, self.target)
+  if ok and position.same_refs(self.data.mr.diff_refs, latest.diff_refs) then
+    self.data.status = self:read_status(latest)
+  else
+    -- A write can succeed even when its subsequent status read fails. Do not
+    -- turn that read failure into an ambiguous write or invite a duplicate.
+    self.data.status = { pipeline = { state = "unknown" }, review = { state = "unknown" } }
+    notify("Review status could not be refreshed. Run :ReviewRefresh.", vim.log.levels.WARN)
+  end
+  ui.panel(self)
+end
+
 function Session:refresh()
   if not ui.valid(self) then
     notify("Open a review with :Review first.", vim.log.levels.WARN)
     return
   end
-  if self.submitting or self.approving then
+  if self.submitting or self.deciding then
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end
@@ -86,6 +108,7 @@ function Session:refresh()
     if not position.same_refs(data.mr.diff_refs, latest.diff_refs) then
       error("The review changed while loading. Run :ReviewRefresh to try again.", 0)
     end
+    data.status = self:read_status(latest)
     if generation ~= self.generation then return end
     self.refreshing = false
     if not ui.valid(self) then return end
@@ -586,7 +609,7 @@ function Session:jump_thread(discussion, close)
 end
 
 function Session:submit()
-  if not self.ready or self.submitting or self.approving or self.refreshing then return end
+  if not self.ready or self.submitting or self.deciding or self.refreshing or self.closed then return end
   if #self.drafts == 0 then notify("No local drafts to submit."); return end
   for _, draft in ipairs(self.drafts) do
     if draft.status == "uncertain" or draft.status == "sending" then
@@ -619,89 +642,165 @@ function Session:submit()
     preview[#preview + 1] = ""
   end
   ui.document("Review drafts · q closes preview", preview)
-  vim.ui.select({ "Keep local", "Publish " .. #self.drafts .. " comment(s) to " .. self.provider.name },
-    { prompt = "Publish these review comments?" }, function(choice)
-      if not choice or choice == "Keep local" or self.closed or self.submitting
-          or self.approving or self.refreshing then return end
-      self.submitting = true
-      self:task(function()
-        local latest = self.provider.current(self.target)
-        for _, draft in ipairs(self.drafts) do
-          if draft.status ~= "published" and not position.same_refs(draft.position, latest.diff_refs) then
-            self.submitting = false
-            error("The review diff changed since a draft was created. Drafts remain local; choose updated positions.", 0)
-          end
+  local publish_choice = "Publish " .. #self.drafts .. " comment(s) to " .. self.provider.name
+  local changes_choice = publish_choice .. " and request changes"
+  local choices = { "Keep local", publish_choice }
+  if self.provider.request_changes then choices[#choices + 1] = changes_choice end
+  local function publish(request_changes, summary)
+    if self.closed or self.submitting or self.deciding or self.refreshing then return end
+    self.submitting = true
+    local count, requesting = 0, false
+    self:task(function()
+      local latest = self.provider.current(self.target)
+      if request_changes and not position.same_refs(self.data.mr.diff_refs, latest.diff_refs) then
+        error("The review changed. Run :ReviewRefresh before requesting changes. Drafts remain local.", 0)
+      end
+      for _, draft in ipairs(self.drafts) do
+        if draft.status ~= "published" and not position.same_refs(draft.position, latest.diff_refs) then
+          error("The review diff changed since a draft was created. Drafts remain local; choose updated positions.", 0)
         end
-        local count = 0
-        while #self.drafts > 0 do
-          local draft = self.drafts[1]
-          if draft.status ~= "published" then
-            local current_mr = self.provider.current(self.target)
-            if not position.same_refs(draft.position, current_mr.diff_refs) then
-              error("The review changed during submission. Remaining drafts stay local.", 0)
-            end
-            local publish = self.provider.post
-            if draft.reply then
-              if not self.provider.reply or not self.provider.validate_reply then
-                error("Reply drafts are not supported by the " .. self.provider.name .. " provider.", 0)
-              end
-              self.provider.validate_reply(self.target, draft)
-              publish = self.provider.reply
-            elseif self.provider.validate_submission then
-              self.provider.validate_submission(self.target, draft)
-            end
-            draft.status = "sending"
-            drafts.save(self.config, self.target, self.drafts)
-            local ok, response = pcall(publish, self.target, draft)
-            if not ok then
-              draft.status = "uncertain"
-              pcall(drafts.save, self.config, self.target, self.drafts)
-              error("Publication outcome could not be confirmed. Check " .. self.provider.name
-                .. " before retrying. " .. tostring(response), 0)
-            end
-            draft.status, draft.published_id = "published", response.id
-            drafts.save(self.config, self.target, self.drafts)
-            count = count + 1
+      end
+      if request_changes and self.provider.validate_request_changes then
+        self.provider.validate_request_changes(self.target)
+      end
+      while #self.drafts > 0 do
+        local draft = self.drafts[1]
+        if draft.status ~= "published" then
+          local current_mr = self.provider.current(self.target)
+          if not position.same_refs(draft.position, current_mr.diff_refs) then
+            error("The review changed during submission. Remaining drafts stay local.", 0)
           end
-          table.remove(self.drafts, 1)
+          local transport = self.provider.post
+          if draft.reply then
+            if not self.provider.reply or not self.provider.validate_reply then
+              error("Reply drafts are not supported by the " .. self.provider.name .. " provider.", 0)
+            end
+            self.provider.validate_reply(self.target, draft)
+            transport = self.provider.reply
+          elseif self.provider.validate_submission then
+            self.provider.validate_submission(self.target, draft)
+          end
+          draft.status = "sending"
           drafts.save(self.config, self.target, self.drafts)
+          local ok, response = pcall(transport, self.target, draft)
+          if not ok then
+            draft.status = "uncertain"
+            pcall(drafts.save, self.config, self.target, self.drafts)
+            error("Publication outcome could not be confirmed. Check " .. self.provider.name
+              .. " before retrying. " .. tostring(response), 0)
+          end
+          draft.status, draft.published_id = "published", response.id
+          drafts.save(self.config, self.target, self.drafts)
+          count = count + 1
         end
-        self.submitting = false
-        self.data.discussions = self.provider.discussions(self.target, self.data.mr.diff_refs, self.data.diffs)
-        if self.current and self.current.rows then self:map_threads(self.current, self.generation) end
-        ui.panel(self)
-        ui.comments(self)
-        notify(("Published %d comment(s)."):format(count))
-      end, function() self.submitting = false end)
+        table.remove(self.drafts, 1)
+        drafts.save(self.config, self.target, self.drafts)
+      end
+      if request_changes then
+        local current_mr = self.provider.current(self.target)
+        if not position.same_refs(latest.diff_refs, current_mr.diff_refs) then
+          error(("Published %d comment(s), but the review changed. Refresh before requesting changes."):format(count), 0)
+        end
+        requesting = true
+        self.provider.request_changes(self.target, latest.diff_refs, summary)
+        requesting = false
+      end
+      notify(("Published %d comment(s)%s."):format(count, request_changes and " and requested changes" or ""))
+      self:update_status()
+      self.data.discussions = self.provider.discussions(self.target, self.data.mr.diff_refs, self.data.diffs)
+      if self.current and self.current.rows then self:map_threads(self.current, self.generation) end
+      ui.panel(self)
+      ui.comments(self)
+      self.submitting = false
+    end, function(err)
+      self.submitting = false
+      if requesting then
+        notify(("Published %d comment(s); Request changes was not confirmed. Check %s before retrying. %s")
+          :format(count, self.provider.name, err), vim.log.levels.WARN)
+      end
+    end)
+  end
+  vim.ui.select(choices,
+    { prompt = "Publish these review comments?" }, function(choice)
+      if choice == publish_choice then publish(false)
+      elseif choice == changes_choice then
+        self:request_changes_summary(function(summary) publish(true, summary) end)
+      end
     end)
 end
 
-function Session:approve()
+function Session:request_changes_summary(callback)
+  if not self.provider.request_changes_requires_body then callback(); return end
+  vim.ui.input({ prompt = "Request changes summary: " }, function(summary)
+    if not summary then return end
+    summary = vim.trim(summary)
+    if summary == "" then notify("Request changes requires a summary.", vim.log.levels.WARN); return end
+    callback(summary)
+  end)
+end
+
+function Session:decision(action, summary)
   if not self.ready or self.closed then
-    notify("Wait for the review to finish loading before approving it.", vim.log.levels.WARN)
+    notify("Wait for the review to finish loading.", vim.log.levels.WARN)
     return
   end
-  if not self.provider.approve then
-    notify("Approval is only supported for GitLab merge requests.", vim.log.levels.WARN)
+  if not self.provider[action] then
+    notify("This review decision is not supported by " .. self.provider.name .. ".", vim.log.levels.WARN)
     return
   end
-  if self.approving or self.submitting or self.refreshing then
+  if self.deciding or self.submitting or self.refreshing then
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end
-  self.approving = true
+  self.deciding = true
+  local sending = false
   self:task(function()
-    self.provider.approve(self.target)
-    self.approving = false
-    notify(("Approved GitLab MR !%d."):format(self.target.iid))
-  end, function()
-    self.approving = false
+    local latest = self.provider.current(self.target)
+    if not position.same_refs(self.data.mr.diff_refs, latest.diff_refs) then
+      error("The review changed. Run :ReviewRefresh before submitting a review decision.", 0)
+    end
+    if action == "request_changes" and self.provider.validate_request_changes then
+      self.provider.validate_request_changes(self.target)
+    end
+    sending = true
+    self.provider[action](self.target, latest.diff_refs, summary)
+    sending = false
+    notify(("%s %s %s%d."):format(action == "approve" and "Approved" or "Requested changes on",
+      self.provider.name, self.provider.prefix, self.target.iid))
+    self:update_status()
+    self.deciding = false
+  end, function(err)
+    self.deciding = false
+    if sending then
+      notify("The review decision was not confirmed. Check " .. self.provider.name
+        .. " before retrying. " .. err, vim.log.levels.WARN)
+    end
+  end)
+end
+
+function Session:approve()
+  self:decision("approve")
+end
+
+function Session:request_changes()
+  if not self.ready or self.closed or self.deciding or self.submitting or self.refreshing then return end
+  if not self.provider.request_changes then
+    notify("Request changes is not supported by " .. self.provider.name .. ".", vim.log.levels.WARN)
+    return
+  end
+  self:request_changes_summary(function(summary)
+    local choice = ("Request changes on %s %s%d"):format(self.provider.name, self.provider.prefix, self.target.iid)
+    vim.ui.select({ "Cancel", choice }, {
+      prompt = "Request changes? Local drafts will stay local.",
+    }, function(selected)
+      if selected == choice then self:decision("request_changes", summary) end
+    end)
   end)
 end
 
 function Session:close()
   if self.closed then return end
-  if self.submitting or self.approving then
+  if self.submitting or self.deciding then
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end

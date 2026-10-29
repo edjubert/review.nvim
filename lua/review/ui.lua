@@ -1,5 +1,6 @@
 local threads = require("review.threads")
 local emoji = require("review.emoji")
+local status = require("review.status")
 local M = {}
 local namespace = vim.api.nvim_create_namespace("review")
 local comment_namespace = vim.api.nvim_create_namespace("review.comments")
@@ -20,6 +21,9 @@ function M.highlights()
     ReviewSelected = "CursorLine",
     ReviewDraftCount = "Special",
     ReviewHelp = "Comment",
+    ReviewStatusOk = "DiagnosticOk",
+    ReviewStatusWarn = "DiagnosticWarn",
+    ReviewStatusError = "DiagnosticError",
     ReviewCommentBorder = "FloatBorder",
     ReviewCommentAuthor = "Title",
     ReviewCommentBody = "NormalFloat",
@@ -224,6 +228,7 @@ local function footer_hints(session)
     " gd drafts · " .. (M.info_key(session) or ":ReviewInfo") .. " info",
     " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh " .. session.provider.kind,
     " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
+    " :ReviewApprove / :ReviewRequestChanges",
   }
 end
 
@@ -288,6 +293,24 @@ function M.panel(session)
     if selected then
       decorations[#decorations + 1] = { line = #lines, selected = true }
     end
+  end
+  local review_status = session.data and session.data.status
+  if review_status then
+    local pipeline, review = review_status.pipeline, review_status.review
+    local function status_line(text, state)
+      lines[#lines + 1] = text:gsub("[\r\n]", " ")
+      highlight(#lines, 0, #lines[#lines], status.highlight(state))
+    end
+    status_line("Pipeline: " .. status.label(pipeline.state)
+      .. (pipeline.id and (" (#" .. pipeline.id .. ")") or ""), pipeline.state)
+    local count = review.approvals and (" · " .. review.approvals
+      .. (review.required and ("/" .. review.required) or "") .. " approval(s)") or ""
+    status_line("Review: " .. status.label(review.state) .. count, review.state)
+    for _, reviewer in ipairs(review.reviewers or {}) do
+      status_line("  @" .. reviewer.username .. " · " .. status.label(reviewer.state)
+        .. (reviewer.stale and " (stale)" or ""), reviewer.stale and "unknown" or reviewer.state)
+    end
+    lines[#lines + 1] = ""
   end
   local function files()
     local status_groups = {

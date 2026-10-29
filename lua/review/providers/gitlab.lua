@@ -2,6 +2,7 @@ local async = require("review.async")
 local url = require("review.url")
 local position = require("review.position")
 local threads = require("review.threads")
+local status = require("review.status")
 local M = { name = "GitLab", cli = "glab", kind = "MR", label = "merge request", prefix = "!" }
 
 function M.head_ref(target)
@@ -88,9 +89,98 @@ function M.post(target, draft)
   })
 end
 
-function M.approve(target)
+function M.approve(target, refs)
   -- Approval is only sent by the explicit :ReviewApprove command.
-  return M.request(target, M.mr_path(target) .. "/approve", {})
+  return M.request(target, M.mr_path(target) .. "/approve", { sha = refs.head_sha })
+end
+
+function M.status(target, mr)
+  local pipeline = type(mr.head_pipeline) == "table" and mr.head_pipeline or nil
+  return {
+    pipeline = {
+      state = pipeline and status.pipeline({ pipeline.status or "unknown" }) or "none",
+      id = pipeline and type(pipeline.id) == "number" and pipeline.id or nil,
+      web_url = pipeline and type(pipeline.web_url) == "string" and pipeline.web_url or nil,
+    },
+    review = status.read(function()
+      local approvals = M.request(target, M.mr_path(target) .. "/approvals")
+      local reviewers, by_user = {}, {}
+      for _, reviewer in ipairs(M.pages(target, M.mr_path(target) .. "/reviewers")) do
+        local user = type(reviewer.user) == "table" and reviewer.user.username
+        if user then
+          local decision = {
+            username = user,
+            state = reviewer.state == "requested_changes" and "changes_requested"
+              or (type(reviewer.state) == "string" and reviewer.state or "unknown"),
+          }
+          reviewers[#reviewers + 1], by_user[user] = decision, decision
+        end
+      end
+      for _, entry in ipairs(approvals.approved_by or {}) do
+        local user = type(entry.user) == "table" and entry.user.username
+        if user then
+          if by_user[user] then
+            if by_user[user].state ~= "changes_requested" then by_user[user].state = "approved" end
+          else reviewers[#reviewers + 1] = { username = user, state = "approved" } end
+        end
+      end
+      table.sort(reviewers, function(a, b) return a.username < b.username end)
+      local state = approvals.approved == true and "approved" or "pending"
+      for _, reviewer in ipairs(reviewers) do
+        if reviewer.state == "changes_requested" then state = "changes_requested" end
+      end
+      if mr.detailed_merge_status == "requested_changes" then state = "changes_requested" end
+      return {
+        state = state, approvals = #(approvals.approved_by or {}),
+        required = type(approvals.approvals_required) == "number" and approvals.approvals_required or nil,
+        reviewers = reviewers,
+      }
+    end),
+  }
+end
+
+function M.validate_request_changes(target)
+  -- Introspection is read-only and detects older GitLab installations before
+  -- any comments are published by the combined submission flow.
+  local result = M.request(target, "graphql", {
+    query = "{ __type(name: \"Mutation\") { fields { name } } }",
+  })
+  local data = type(result) == "table" and result.data
+  local mutation = type(data) == "table" and data.__type
+  -- Some GitLab versions serve a cached complete introspection response even
+  -- for a targeted __type query. The Mutation fields then live in schema.types.
+  if type(mutation) ~= "table" and type(data) == "table" and type(data.__schema) == "table" then
+    for _, candidate in ipairs(data.__schema.types or {}) do
+      if candidate.name == "Mutation" then mutation = candidate; break end
+    end
+  end
+  if type(mutation) == "table" then
+    for _, field in ipairs(mutation.fields or {}) do
+      if field.name == "mergeRequestRequestChanges" then return end
+    end
+  end
+  error("This GitLab server does not expose the Request changes API. Use its web interface.", 0)
+end
+
+function M.request_changes(target)
+  local result = M.request(target, "graphql", {
+    query = [[mutation($input: MergeRequestRequestChangesInput!) {
+      mergeRequestRequestChanges(input: $input) { errors mergeRequest { iid } }
+    }]],
+    variables = { input = { projectPath = target.project, iid = tostring(target.iid) } },
+  })
+  local data = type(result) == "table" and result.data
+  local payload = type(data) == "table" and data.mergeRequestRequestChanges
+  local errors = type(payload) == "table" and payload.errors
+  if type(errors) == "table" and #errors > 0 then
+    error("GitLab refused Request changes: " .. table.concat(errors, "; "), 0)
+  end
+  if type(payload) ~= "table" or type(errors) ~= "table"
+      or type(payload.mergeRequest) ~= "table" or tostring(payload.mergeRequest.iid) ~= tostring(target.iid)
+      or (type(result.errors) == "table" and #result.errors > 0) then
+    error("GitLab did not confirm Request changes. Check the MR before retrying.", 0)
+  end
+  return payload.mergeRequest
 end
 
 function M.reply_target(discussion)
