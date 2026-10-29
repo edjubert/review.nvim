@@ -2,6 +2,7 @@ local M = {}
 local defaults = {
   panel_width = 44,
   inline_comments = false,
+  pipeline_refresh_interval = 5000,
   keymaps = {
     comment = false, submit = false, refresh = false, info = false, help = false,
     toggle_comments = false, reply = false, open_comment = false,
@@ -26,6 +27,9 @@ function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
   assert(type(M.config.inline_comments) == "boolean", "inline_comments must be a boolean")
+  local interval = M.config.pipeline_refresh_interval
+  assert(type(interval) == "number" and interval % 1 == 0 and (interval == 0 or interval >= 1000),
+    "pipeline_refresh_interval must be 0 or an integer of at least 1000 milliseconds")
   assert(type(M.config.keymaps) == "table", "keymaps must be a table")
   for name, key in pairs(M.config.keymaps) do
     assert(defaults.keymaps[name] ~= nil, "Unknown keymaps." .. name)

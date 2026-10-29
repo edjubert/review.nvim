@@ -126,9 +126,20 @@ COMMANDS
     Long previews show the last 5,000 lines / 512 KiB with a truncation notice.
     Missing, erased or inaccessible logs display a message. Downstream
     triggers show downstream pipeline metadata instead of a job log.
-    Finished previews are cached while browsing this list. Reselecting a
-    job that has not finished reloads it after a three-second cache interval;
-    logs do not poll in the background.
+    A focused running pipeline refreshes every five seconds: pipeline details,
+    grouped job statuses and the selected job's metadata and log. The query
+    and selected job are preserved if that job remains among the results.
+    A final log update is loaded when the pipeline leaves running, then
+    polling stops. It pauses outside the picker or when Neovim loses focus,
+    and resumes on returning. Closing the picker releases its timer.
+    Pending requests may finish; stale responses cannot replace another
+    selection or update a closed picker.
+    Automatic log updates follow the end if visible; scrolling up preserves
+    the view. Set pipeline_refresh_interval in milliseconds (at least 1000),
+    or 0 to disable polling. Application focus detection depends on terminal
+    FocusGained/FocusLost events reaching Neovim.
+    Finished previews are otherwise cached while browsing this list.
+    Reselecting an unfinished job reloads it after a three-second interval.
     Telescope's selection action on a job opens it in GitLab. Enable
     keymaps.pipeline_open for an additional browser shortcut, and
     keymaps.pipeline_back to return from jobs to the pipeline list.
@@ -288,6 +299,7 @@ CONFIGURATION                                                  *review-setup*
     require("review").setup({
       panel_width = 44,
       inline_comments = false,
+      pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables
       keymaps = {}, -- all mappings disabled
       clone_protocol = "ssh",
       repo = nil,
@@ -326,6 +338,7 @@ The README includes the same example.
       save_draft = "<C-s>", -- comment editor, normal/insert mode
       -- Extra pipeline picker shortcuts, insert/normal mode.
       pipeline_open = "<C-o>", pipeline_back = "<C-b>",
+      pipeline_refresh = "<C-r>",
     }
 <
 

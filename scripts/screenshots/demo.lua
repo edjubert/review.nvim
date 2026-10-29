@@ -152,7 +152,7 @@ local function reset()
   vim.fn.delete(root .. "/state", "rf")
   review.setup(vim.tbl_deep_extend("force", preferences, {
     repo = repo, cache_dir = root .. "/cache", state_dir = root .. "/state",
-    panel_width = 44, inline_comments = false,
+    panel_width = 44, inline_comments = false, pipeline_refresh_interval = 0,
     -- Explicit demo preferences, matching the optional README example.
     keymaps = {
       next_commit = "]c", prev_commit = "[c", next_file = "]f", prev_file = "[f",

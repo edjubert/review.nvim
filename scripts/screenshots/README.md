@@ -92,7 +92,8 @@ the demo's optional `<leader>r?` mapping. The jobs picker now has stage headings
 and previews a simulated job log below its metadata; `pipeline-job.png` keeps
 the earlier metadata-only preview. The log now retains ANSI colors and opens
 at its end. The demo's `<C-r>` mapping, or `:ReviewJobRefresh`, reloads the selected
-job's fixture metadata and log. These captures remain unchanged.
+job's fixture metadata and log. Automatic pipeline refresh is disabled in this
+demo so scenes stay stable. These captures remain unchanged.
 
 ### Recapture one scene
 

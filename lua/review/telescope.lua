@@ -6,6 +6,7 @@ local telescope
 local pipeline_namespace = vim.api.nvim_create_namespace("review.pipeline")
 local job_groups_namespace = vim.api.nvim_create_namespace("review.job-groups")
 local job_previews = {}
+local application_focused, focus_group = true, nil
 
 local function notify(message, level)
   vim.notify(message, level or vim.log.levels.INFO, { title = "review" })
@@ -181,6 +182,109 @@ local function preview_buffer(buf, lines, highlights, filetype, definitions)
     })
   end
   vim.bo[buf].modifiable = false
+end
+
+local function window_view(win)
+  if not win or not vim.api.nvim_win_is_valid(win) then return end
+  return vim.api.nvim_win_call(win, function()
+    local view = vim.fn.winsaveview()
+    view.follow_tail = vim.fn.line("w$") >= vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
+    return view
+  end)
+end
+
+local function preview_view(previewer)
+  return window_view(previewer and previewer.state and previewer.state.winid)
+end
+
+local function restore_results(picker, saved)
+  if not saved or picker:get_selection() ~= saved.entry or not saved.view
+      or not vim.api.nvim_win_is_valid(picker.results_win) then return end
+  vim.api.nvim_win_call(picker.results_win, function() vim.fn.winrestview(saved.view) end)
+end
+
+local function restore_preview(previewer, buf, lines, view, tail, wanted)
+  -- Telescope attaches a newly created preview buffer on its next turn.
+  vim.schedule(function()
+    local win = previewer.state and previewer.state.winid
+    if not wanted() or not win or not vim.api.nvim_win_is_valid(win)
+        or vim.api.nvim_win_get_buf(win) ~= buf then return end
+    vim.api.nvim_win_call(win, function()
+      if view and not (tail and view.follow_tail) then
+        vim.fn.winrestview(view)
+      elseif tail then
+        vim.api.nvim_win_set_cursor(win, { #lines, 0 })
+        vim.cmd.normal({ args = { "zb" }, bang = true })
+      end
+    end)
+  end)
+end
+
+local function running(pipeline)
+  return pipeline and (pipeline.state == "running" or pipeline.state == "in_progress")
+end
+
+local function replace_record(record, value)
+  if record == value then return end
+  for key in pairs(record) do record[key] = nil end
+  for key, item in pairs(value) do record[key] = item end
+end
+
+local function focused_poll(interval, prompt, valid, contains, active, refresh)
+  local timer, group, stopped, busy, deferred = nil, nil, false, false, false
+  local poll = {}
+  function poll.focused()
+    return not stopped and application_focused and valid() and contains(vim.api.nvim_get_current_buf())
+  end
+  function poll.close()
+    if stopped then return end
+    stopped = true
+    if timer then timer:stop(); timer:close() end
+    if group then vim.api.nvim_del_augroup_by_id(group) end
+  end
+  function poll.defer()
+    if not stopped then deferred = true end
+  end
+  local function tick()
+    if not valid() then poll.close(); return end
+    if not poll.focused() or not (active() or deferred) then poll.update(); return end
+    if busy then return end
+    busy, deferred = true, false
+    local function done() busy = false; poll.update() end
+    local ok, err = pcall(refresh, done)
+    if not ok then done(); notify(err, vim.log.levels.ERROR) end
+  end
+  function poll.update()
+    if stopped or not timer then return end
+    if not valid() then poll.close()
+    elseif poll.focused() and (active() or deferred) then
+      if not timer:is_active() then timer:start(interval, interval, vim.schedule_wrap(tick)) end
+    else
+      timer:stop()
+    end
+  end
+  if interval > 0 then
+    if not focus_group then
+      -- Keep focus state between pickers too, including a jobs picker opened
+      -- by an asynchronous response after the user switched applications.
+      focus_group = vim.api.nvim_create_augroup("review-pipeline-focus", { clear = true })
+      vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost" }, {
+        group = focus_group,
+        callback = function(event) application_focused = event.event == "FocusGained" end,
+      })
+    end
+    timer = assert(vim.uv.new_timer())
+    group = vim.api.nvim_create_augroup("review-pipeline-poll-" .. prompt, { clear = true })
+    vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost", "BufEnter", "WinEnter", "TabEnter" }, {
+      group = group,
+      callback = function() vim.schedule(poll.update) end,
+    })
+    vim.api.nvim_create_autocmd({ "BufWipeout", "BufDelete" }, {
+      group = group, buffer = prompt, callback = poll.close,
+    })
+    poll.update()
+  end
+  return poll
 end
 
 local function open_browser(value)
@@ -375,23 +479,27 @@ end
 function M.pipelines(session, pipelines)
   if not M.available() then return end
   local keymaps = session.config.keymaps or {}
+  local interval = session.config.pipeline_refresh_interval or 5000
   local cache, job_cache = {}, {}
   local head = session.data.mr.diff_refs.head_sha
   local function session_open()
     return not session.closed and require("review.ui").valid(session)
   end
   -- A pipeline's preview and selection action share the same pending request.
-  local function details(pipeline, done)
+  local function details(pipeline, done, force)
     local key = tostring(pipeline.project_id or session.target.project) .. "/" .. pipeline.id
     local entry = cache[key]
-    if entry then
-      if entry.pending then entry.callbacks[#entry.callbacks + 1] = done
-      else done(entry.value, entry.error) end
+    if entry and entry.pending then
+      entry.callbacks[#entry.callbacks + 1] = done
+      return
+    elseif entry and not force then
+      done(entry.value, entry.error)
       return
     end
     entry = { pending = true, callbacks = { done } }
     cache[key] = entry
     local function finish(value, err)
+      if value then replace_record(pipeline, value); value = pipeline end
       entry.pending, entry.value, entry.error = false, value, err
       local callbacks = entry.callbacks
       entry.callbacks = nil
@@ -474,37 +582,85 @@ function M.pipelines(session, pipelines)
       return
     end
     local prompt, selected, generation, picker = nil, nil, 0, nil
-    local current_preview, current_entry, loading
+    local current_preview, current_entry, current_value, loading, poll
+    local preserved_entry, preserved_view, preserved_results, refresh_error
+    local entries = {}
     local function picker_open()
       return picker and not picker.closed and prompt and vim.api.nvim_buf_is_valid(prompt) and session_open()
     end
-    local function load_preview(self, entry, force)
+    local function contains(buf)
+      return buf == prompt or buf == picker.results_bufnr
+        or (current_preview and current_preview.state and buf == current_preview.state.bufnr)
+    end
+    local function finder()
+      local results = {}
+      for _, item in ipairs(grouped_jobs(pipeline.jobs)) do
+        local job = item.job
+        local key = (job.trigger and "bridge/" or "job/") .. job.id
+        local entry = entries[key]
+        if entry then replace_record(entry.value, job)
+        else
+          entry = { value = job, display = columns(job, true) }
+          entries[key] = entry
+        end
+        entry.group, entry.rank = item.group, item.rank
+        entry.ordinal = table.concat({ text(job.id), text(job.stage), text(job.name), text(job.state),
+          text(job.failure_reason) }, " ")
+        results[#results + 1] = entry
+      end
+      -- Retain entry identity so Telescope can follow the selected job across
+      -- status changes, new jobs and retries without resetting the query.
+      return telescope.finders.new_table({ results = results, entry_maker = function(entry) return entry end })
+    end
+    local function load_preview(self, entry, force, automatic, view)
+      if automatic and poll and not poll.focused() then
+        poll.defer()
+        poll.update()
+        return
+      end
       local buf, job = self.state.bufnr, entry.value
+      local previous = current_entry == entry and current_value or nil
+      view = view or (automatic and preview_view(self) or nil)
+      if automatic and previous and running(pipeline) and previous.job.state == job.state then
+        local state = job.state
+        -- Completed logs cannot grow while unrelated jobs continue running.
+        -- Still force one last fetch when the entire pipeline finishes.
+        if state == "success" or state == "failed" or state == "canceled" or state == "skipped" then
+          force = false
+        end
+      end
       current_preview, current_entry = self, entry
-      selected, generation, loading = job, generation + 1, true
+      current_value, selected, generation, loading = previous, job, generation + 1, true
       local request = generation
-      local function wanted()
+      local function wanted(allow_unfocused)
         return picker_open() and selected == job and generation == request
           and picker:get_selection() == entry and self.state and self.state.bufnr == buf
+          and (not automatic or allow_unfocused or (poll and poll.focused()))
       end
-      if not force then
+      local function view_wanted() return wanted(true) end
+      -- Automatic refresh reuses the displayed buffer. Keep its contents and
+      -- scroll position untouched while the new log is still loading.
+      if (not force and not automatic) or (automatic and not previous) then
         local lines, highlights, definitions = job_preview({ job = job })
         preview_buffer(buf, lines, highlights, "review-job-log", definitions)
+        if automatic then restore_preview(self, buf, lines, view, true, view_wanted) end
       end
       job_details(job, function(value)
+        if generation == request then loading = false end
+        if poll then
+          if automatic and wanted(true) and not poll.focused() then poll.defer() end
+          poll.update()
+        end
         if not wanted() then return end
-        loading = false
+        current_value = value
+        -- Capture at response time too: the user may have scrolled while the
+        -- request was pending. An automatic update must not steal that view.
+        local saved = automatic and preview_view(self) or nil
         local lines, highlights, definitions = job_preview(value)
         preview_buffer(buf, lines, highlights, "review-job-log", definitions)
-        -- Telescope attaches the preview buffer on its next scheduled turn.
-        vim.schedule(function()
-          local win = self.state and self.state.winid
-          if not wanted() or not win or not vim.api.nvim_win_is_valid(win)
-              or vim.api.nvim_win_get_buf(win) ~= buf then return end
-          vim.api.nvim_win_set_cursor(win, { #lines, 0 })
-          vim.api.nvim_win_call(win, function() vim.cmd.normal({ args = { "zb" }, bang = true }) end)
-        end)
+        restore_preview(self, buf, lines, saved or view, true, view_wanted)
       end, wanted, force)
+      if poll then poll.update() end
     end
     local function refresh()
       local entry = picker:get_selection()
@@ -517,39 +673,70 @@ function M.pipelines(session, pipelines)
         load_preview(current_preview, entry, true)
       end
     end
+    local function auto_refresh(done)
+      if loading then poll.defer(); done(); return end
+      details(pipeline, function(result, err)
+        if not poll.focused() then
+          if picker_open() then poll.defer() end
+          done()
+          return
+        end
+        local failure = err or (result and (result.jobs_error or result.bridges_error))
+        if failure and not refresh_error then
+          notify("Pipeline refresh failed: " .. text(failure), vim.log.levels.WARN)
+        end
+        refresh_error = failure
+        if result then
+          if failure then
+            -- Keep the existing list if a stage endpoint failed. The selected
+            -- log can still reload, including the pipeline's final output.
+            local entry = picker:get_selection()
+            if entry and entry == current_entry then load_preview(current_preview, entry, true, true) end
+          else
+            preserved_entry, preserved_view = picker:get_selection(), preview_view(current_preview)
+            preserved_results = { entry = preserved_entry, view = window_view(picker.results_win) }
+            picker:refresh(finder(), { reset_prompt = false })
+          end
+        end
+        done()
+      end, true)
+    end
     picker = telescope.pickers.new(options, {
       prompt_title = "Pipeline #" .. pipeline.id .. " jobs",
       results_title = "Select: browser"
         .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or "")
         .. (keymaps.pipeline_back and " · " .. keymaps.pipeline_back .. ": pipelines" or "")
         .. (keymaps.pipeline_refresh and " · " .. keymaps.pipeline_refresh .. ": refresh log" or ""),
-      finder = telescope.finders.new_table({
-        results = grouped_jobs(pipeline.jobs),
-        entry_maker = function(item)
-          local job = item.job
-          return {
-            value = job, group = item.group, rank = item.rank, display = columns(job, true),
-            ordinal = table.concat({ text(job.id), text(job.stage), text(job.name), text(job.state),
-              text(job.failure_reason) }, " "),
-          }
-        end,
-      }),
+      finder = finder(),
       sorter = grouped_job_sorter(),
-      on_complete = { job_group_headings },
+      selection_strategy = "follow",
+      on_complete = { function(completed)
+        job_group_headings(completed)
+        restore_results(completed, preserved_results)
+        preserved_results = nil
+      end },
       previewer = telescope.previewers.new_buffer_previewer({
         title = "Job log",
-        define_preview = function(self, entry) load_preview(self, entry, false) end,
-        teardown = function() if prompt then job_previews[prompt] = nil end end,
+        -- Reuse one buffer rather than allocating a log buffer on every tick.
+        get_buffer_by_name = function() return "review://job-log" end,
+        define_preview = function(self, entry)
+          local automatic, view = entry == preserved_entry, preserved_view
+          preserved_entry, preserved_view = nil, nil
+          load_preview(self, entry, automatic, automatic, view)
+        end,
+        teardown = function()
+          if poll then poll.close() end
+          if prompt then job_previews[prompt] = nil end
+        end,
       }),
       attach_mappings = function(prompt_bufnr, map)
         prompt = prompt_bufnr
         job_previews[prompt] = {
           session = session, valid = picker_open, refresh = refresh,
-          contains = function(buf)
-            return buf == prompt or buf == picker.results_bufnr
-              or (current_preview and current_preview.state and buf == current_preview.state.bufnr)
-          end,
+          contains = contains,
         }
+        poll = focused_poll(interval, prompt, picker_open, contains, function() return running(pipeline) end,
+          auto_refresh)
         local function open()
           local entry = telescope.action_state.get_selected_entry()
           if entry and session_open() then open_browser(entry.value) end
@@ -572,48 +759,115 @@ function M.pipelines(session, pipelines)
   end
   show_pipelines = function()
     if not session_open() then return end
-    local prompt, selected, opening = nil, nil, false
+    local prompt, selected, opening, picker = nil, nil, false, nil
+    local current_preview, generation, poll = nil, 0, nil
+    local preserved_entry, preserved_view, preserved_results, refresh_error
+    local entries = {}
     local function picker_open()
-      return prompt and vim.api.nvim_buf_is_valid(prompt) and session_open()
+      return picker and not picker.closed and prompt and vim.api.nvim_buf_is_valid(prompt) and session_open()
     end
-    telescope.pickers.new(options, {
+    local function contains(buf)
+      return buf == prompt or buf == picker.results_bufnr
+        or (current_preview and current_preview.state and buf == current_preview.state.bufnr)
+    end
+    local function finder()
+      local results = {}
+      for _, pipeline in ipairs(pipelines) do
+        local entry = entries[pipeline]
+        if not entry then
+          entry = { value = pipeline, display = columns(pipeline, false) }
+          entries[pipeline] = entry
+        end
+        entry.ordinal = table.concat({ text(pipeline.id), text(pipeline.name), text(pipeline.state),
+          text(pipeline.ref), text(pipeline.sha), text(pipeline.source), text(pipeline.created_at) }, " ")
+        results[#results + 1] = entry
+      end
+      return telescope.finders.new_table({ results = results, entry_maker = function(entry) return entry end })
+    end
+    local function auto_refresh(done)
+      local entry = picker:get_selection()
+      if not entry or opening then done(); return end
+      details(entry.value, function(result, err)
+        if poll.focused() and not opening and picker:get_selection() == entry then
+          if result then
+            refresh_error = nil
+            preserved_entry, preserved_view = entry, preview_view(current_preview)
+            preserved_results = { entry = entry, view = window_view(picker.results_win) }
+            picker:refresh(finder(), { reset_prompt = false })
+          else
+            if not refresh_error then notify("Pipeline refresh failed: " .. text(err), vim.log.levels.WARN) end
+            refresh_error = err
+          end
+        elseif picker_open() and picker:get_selection() == entry then
+          poll.defer()
+        end
+        done()
+      end, true)
+    end
+    picker = telescope.pickers.new(options, {
       prompt_title = session.target.project .. " " .. session.provider.prefix .. session.target.iid .. " pipelines",
       results_title = "Select: jobs"
         .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or ""),
-      finder = telescope.finders.new_table({
-        results = pipelines,
-        entry_maker = function(pipeline)
-          return {
-            value = pipeline, display = columns(pipeline, false),
-            ordinal = table.concat({ text(pipeline.id), text(pipeline.name), text(pipeline.state),
-              text(pipeline.ref), text(pipeline.sha), text(pipeline.source), text(pipeline.created_at) }, " "),
-          }
-        end,
-      }),
+      finder = finder(),
       sorter = telescope.config.generic_sorter({}),
+      selection_strategy = "follow",
+      on_complete = { function(completed)
+        restore_results(completed, preserved_results)
+        preserved_results = nil
+      end },
       previewer = telescope.previewers.new_buffer_previewer({
         title = "Pipeline details",
+        get_buffer_by_name = function() return "review://pipeline" end,
         define_preview = function(self, entry)
           local buf, pipeline = self.state.bufnr, entry.value
-          selected = pipeline
+          local automatic, view = entry == preserved_entry, preserved_view
+          preserved_entry, preserved_view = nil, nil
+          if automatic and poll and not poll.focused() then
+            poll.defer()
+            poll.update()
+            return
+          end
+          current_preview, selected, generation = self, pipeline, generation + 1
+          local request = generation
+          local function wanted(allow_unfocused)
+            return picker_open() and selected == pipeline and generation == request
+              and picker:get_selection() == entry and self.state and self.state.bufnr == buf
+              and (not automatic or allow_unfocused or (poll and poll.focused()))
+          end
           local lines, highlights = pipeline_preview(pipeline, head)
-          lines[#lines + 1], lines[#lines + 2] = "", "Loading jobs…"
-          highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineInactive" }
+          if not pipeline.jobs then
+            lines[#lines + 1], lines[#lines + 2] = "", "Loading jobs…"
+            highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineInactive" }
+          end
           preview_buffer(buf, lines, highlights)
           details(pipeline, function(result, err)
-            if not picker_open() or selected ~= pipeline or not self.state or self.state.bufnr ~= buf then return end
-            if result then preview_buffer(buf, pipeline_preview(result, head))
+            if poll then poll.update() end
+            if not wanted() then return end
+            if result then
+              refresh_error = nil
+              local output, colors = pipeline_preview(result, head)
+              preview_buffer(buf, output, colors)
+              if automatic then
+                restore_preview(self, buf, output, view, false, function() return wanted(true) end)
+              end
             else
+              refresh_error = err
               local error_lines, error_highlights = pipeline_preview(pipeline, head)
               field(error_lines, "Details unavailable", err)
               error_highlights[#error_highlights + 1] = { line = #error_lines, group = "ReviewPipelineError" }
               preview_buffer(buf, error_lines, error_highlights)
             end
           end)
+          if poll then poll.update() end
         end,
+        teardown = function() if poll then poll.close() end end,
       }),
       attach_mappings = function(prompt_bufnr, map)
         prompt = prompt_bufnr
+        poll = focused_poll(interval, prompt, picker_open, contains, function()
+          local entry = picker:get_selection()
+          return entry and running(entry.value)
+        end, auto_refresh)
         replace_selection(function()
           local entry = telescope.action_state.get_selected_entry()
           if not entry or opening or not session_open() then return end
@@ -640,7 +894,8 @@ function M.pipelines(session, pipelines)
         end
         return true
       end,
-    }):find()
+    })
+    picker:find()
   end
   show_pipelines()
 end

@@ -534,11 +534,26 @@ works without them. With lazy.nvim, you can add
 `dependencies = { "nvim-telescope/telescope.nvim" }` to the review plugin spec,
 and configure Telescope's own `plenary.nvim` dependency as usual.
 Each command invocation fetches a fresh list; details are cached only while
-browsing that list. Completed job previews are reused; reselecting a job that
-has not finished reloads its details and log after a three-second cache interval.
-Logs do not poll in the background. Late responses never replace another job's
-preview or update a closed picker. Run `:ReviewJobRefresh` from the jobs picker
-or its preview to reload the selected job's details and log immediately, including
+browsing that list. A selected `running` pipeline refreshes every five seconds
+while its Telescope picker has focus. This updates pipeline details, grouped job
+statuses and the selected job's metadata and log. Refreshing preserves the query
+and follows the same job when it remains among the results, including when other
+jobs appear or are retried. The last update loads the final log before polling
+stops when the pipeline leaves `running`.
+
+Polling pauses when Neovim loses application focus or focus moves outside this
+picker, and resumes when focus returns. Closing the picker releases its timer.
+An existing request is allowed to finish; late responses never replace another
+job's preview or update a closed picker. Automatic log updates follow the latest
+output while the end is visible. If you scroll up, they preserve your view.
+Set `pipeline_refresh_interval` to another interval in milliseconds (at least
+`1000`), or `0` to disable automatic refresh. Terminal focus events must reach
+Neovim for application focus detection.
+
+Completed job previews are otherwise reused; reselecting a job that has not
+finished reloads its details and log after a three-second cache interval.
+Run `:ReviewJobRefresh` from the jobs picker or its preview to reload the
+selected job's details and log immediately, including
 completed jobs. The optional example uses `<C-r>` in normal and insert mode.
 An already pending load is kept instead of starting a duplicate request.
 After refreshing, the preview scrolls to the latest output.
@@ -821,6 +836,7 @@ saved if one exists. Finish or discard that pending review on Codeberg first.
 require("review").setup({
   panel_width = 44,
   inline_comments = false, -- initially show only discussion markers
+  pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables polling
   keymaps = {},           -- all shortcuts disabled; see Optional buffer mappings
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected
