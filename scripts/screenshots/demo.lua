@@ -160,7 +160,8 @@ local function reset()
       threads = "<leader>rT", submit = "<leader>rs", refresh = "<leader>rr", info = "<leader>ri",
       toggle_comments = "<leader>rt", toggle_viewed = "<leader>rv", close = "q",
       comment = "<leader>rc", reply = "<leader>rR", thread = "<leader>rl", open_comment = "<leader>ro",
-      search_files = "<leader>rf", panel_open = "<CR>", panel_left = "h", panel_right = "l",
+      search_files = "<leader>rf", files_picker = "<leader>rF", filter_exit = "<Esc>",
+      panel_open = "<CR>", panel_left = "h", panel_right = "l",
       panel_toggle = "za", panel_expand = "zo", panel_collapse = "zc",
       panel_collapse_all = "zM", panel_expand_all = "zR",
       close_document = "q", select_comment = "<CR>", save_draft = "<C-s>",
@@ -240,14 +241,11 @@ local scenes = {
     session:show_threads({ session.data.discussions[1] })
   end,
   DemoFiles = function()
+    review.files("inbox")
     review.files()
-    local title = "Review files · " .. session.head:sub(1, 8)
-    wait(function() return current_picker(title) end, "file picker")
-    current_picker(title):reset_prompt("inbox")
     wait(function()
-      local picker = current_picker(title)
-      return picker and picker:get_selection() ~= nil and picker.manager:num_results() == 2
-    end, "filter file paths")
+      return session.file_tree.count == 2 and vim.api.nvim_get_current_win() == session.filter_win
+    end, "filter file tree")
   end,
   DemoJob = function()
     pipelines()

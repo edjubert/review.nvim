@@ -86,6 +86,20 @@ COMMANDS
     Act on the panel entry under the panel's cursor, from either review window.
     Actions: open, left, right, toggle, expand, collapse, collapse_all, expand_all.
 
+:ReviewFiles [query]                                          *:ReviewFiles*
+    Without a query, focus the search field at the top of the sidebar.
+    Type to filter changed files as you edit. Matching folders stay visible
+    and start expanded. The counter shows matching files / total files.
+    With a query, apply it directly without focusing the field.
+
+:ReviewFilesClear                                        *:ReviewFilesClear*
+    Clear the query and restore the unfiltered directory fold state.
+
+:ReviewFilesPicker                                      *:ReviewFilesPicker*
+    Search all changed files in Telescope, including files hidden by the
+    sidebar filter. Selecting a hidden file clears that filter.
+    Requires telescope.nvim and plenary.nvim.
+
 :ReviewToggleComments                                *:ReviewToggleComments*
     Show or hide discussion messages and replies below their diff lines.
     Keep the chosen state across files, commits and refreshes.
@@ -123,6 +137,11 @@ available. See |review-setup| for the optional Lua example.
 Commands provide navigation without mappings: |:ReviewPanel| controls the tree,
 |:ReviewComplete| opens the full comparison, |:ReviewNextCommit| and
 |:ReviewNextFile| navigate commits/files, and |:ReviewNextChange| jumps changes.
+
+The search field uses a prompt buffer: its native Enter accepts the query and
+returns to the tree; Ctrl-C returns while keeping the filter. Enable
+keymaps.filter_exit for an additional return shortcut. keymaps.search_files
+focuses this field; keymaps.files_picker opens the separate Telescope picker.
 
 Opening a file focuses its first change block, opens any folds covering that
 line and centers the diff view there. A refresh keeps the previous cursor
@@ -246,6 +265,7 @@ The README includes the same example.
       threads = "<leader>rT", submit = "<leader>rs",
       refresh = "<leader>rr", info = "<leader>ri",
       toggle_comments = "<leader>rt", toggle_viewed = "<leader>rv",
+      files_picker = "<leader>rF",
       close = "q",
       -- Diff only; comment also works in visual mode.
       comment = "<leader>rc", reply = "<leader>rR", thread = "<leader>rl",
@@ -255,6 +275,7 @@ The README includes the same example.
       panel_open = "<CR>", panel_left = "h", panel_right = "l",
       panel_toggle = "za", panel_expand = "zo", panel_collapse = "zc",
       panel_collapse_all = "zM", panel_expand_all = "zR",
+      filter_exit = "<Esc>", -- filter input, normal/insert mode
       -- Review document/comment windows.
       close_document = "q", select_comment = "<CR>",
       save_draft = "<C-s>", -- comment editor, normal/insert mode
@@ -266,6 +287,21 @@ The README includes the same example.
 An existing matching repository is used without switching branches.
 Otherwise the plugin fetches a bare repository into cache_dir.
 Local drafts are stored in state_dir/drafts/.
+
+FILE FILTER                                                   *review-filter*
+
+The field stays above the sidebar tree while scrolling. It filters the current
+commit or complete comparison using case-insensitive literal path fragments.
+Whitespace separates terms; every term must match the old or new file path.
+Example: transformation/ sql. Parent folders, Git statuses and viewed markers
+remain visible. Empty results leave the current diff open.
+
+The query survives commit navigation and refreshes. Next/previous file commands
+skip hidden files. Active filtering has separate folds; :ReviewFilesClear
+restores the previous unfiltered tree. Selecting a hidden file through a
+discussion jump or :ReviewFilesPicker clears the query to reveal that file.
+The sidebar filter needs no picker dependency.
+Customize ReviewFilterBorder and ReviewFilterPrompt.
 
 ==============================================================================
 COMMENT POSITIONS                                            *review-comments*

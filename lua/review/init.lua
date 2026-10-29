@@ -5,7 +5,7 @@ local defaults = {
   keymaps = {
     comment = false, submit = false, refresh = false, info = false,
     toggle_comments = false, reply = false, open_comment = false,
-    search_files = false, toggle_viewed = false,
+    search_files = false, files_picker = false, filter_exit = false, toggle_viewed = false,
     next_commit = false, prev_commit = false, next_file = false, prev_file = false,
     next_hunk = false, prev_hunk = false, complete = false, drafts = false,
     thread = false, threads = false, close = false,
@@ -144,12 +144,28 @@ function M.pipelines()
   M.session:show_pipelines()
 end
 
-function M.files()
+function M.files(query)
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
     return
   end
-  M.session:search_files()
+  M.session:search_files(query)
+end
+
+function M.files_picker()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:pick_files()
+end
+
+function M.clear_files()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  require("review.ui").set_filter(M.session, "")
 end
 
 function M.viewed(enabled)
@@ -204,7 +220,11 @@ function M._commands()
     { desc = "Show the MR/PR title and description" })
   vim.api.nvim_create_user_command("ReviewPipelines", M.pipelines,
     { desc = "Browse GitLab MR pipelines and jobs in Telescope" })
-  vim.api.nvim_create_user_command("ReviewFiles", M.files,
+  vim.api.nvim_create_user_command("ReviewFiles", function(args) M.files(args.args) end,
+    { nargs = "*", desc = "Filter changed files in the review panel" })
+  vim.api.nvim_create_user_command("ReviewFilesClear", M.clear_files,
+    { desc = "Clear the review panel's file filter" })
+  vim.api.nvim_create_user_command("ReviewFilesPicker", M.files_picker,
     { desc = "Search the current review's changed files in Telescope" })
   vim.api.nvim_create_user_command("ReviewViewed", function() M.viewed(true) end,
     { desc = "Mark the selected review file viewed locally" })

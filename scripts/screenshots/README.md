@@ -43,7 +43,7 @@ Close Markdown windows with `q`.
 | `:DemoDrafts` | `local-drafts.png` | Two local drafts with paths and excerpts |
 | `:DemoSubmit` | `submission-preview.png` | Preview and all three publication choices, initially Keep local |
 | `:DemoThreads` | `discussion.png` | Individually resolved conversation, participants and reaction users |
-| `:DemoFiles` | `file-search.png` | Search for inbox, Git statuses and viewed markers |
+| `:DemoFiles` | `file-search.png` | Sidebar input filtering inbox, 2/5 counter, folders, Git statuses and viewed markers |
 | `:DemoPipelines` | `pipelines.png` | Three pipelines and grouped jobs with five status colors |
 | `:DemoJob` | `pipeline-job.png` | Failed integration checks job, runner, timings and failure reason |
 | `:DemoRequestChanges` | `request-changes.png` | Standalone change request dialog with Cancel selected |
@@ -101,7 +101,7 @@ session instead.
 - [ ] Commit scene selects the actual first commit.
 - [ ] Drafts and comment ranges use the exact fixture Git refs.
 - [ ] Publication preview shows all three choices.
-- [ ] File picker searches source and test paths.
+- [ ] Sidebar filter keeps matching source/test paths and shows 2/5 files.
 - [ ] Pipeline preview shows four stages and eight jobs.
 - [ ] Success green, failure red, pending orange, running blue, inactive grey.
 - [ ] Failed job shows 83 seconds, demo-runner and script_failure.

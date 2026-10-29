@@ -394,7 +394,9 @@ function M.files(session)
         for i, file in ipairs(files) do if file == entry.value then index = i; break end end
         if not index then return end
         telescope.actions.close(prompt_bufnr)
-        vim.schedule(function() if valid_selection() then session:select_file(index) end end)
+        vim.schedule(function()
+          if valid_selection() then session:select_file(index, { require_path = true }) end
+        end)
       end)
       return true
     end,

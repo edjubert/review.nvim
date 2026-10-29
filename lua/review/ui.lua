@@ -8,6 +8,8 @@ local M = {}
 local namespace = vim.api.nvim_create_namespace("review")
 local comment_namespace = vim.api.nvim_create_namespace("review.comments")
 local panel_namespace = vim.api.nvim_create_namespace("review.panel")
+local filter_namespace = vim.api.nvim_create_namespace("review.filter")
+local filter_prompt = "> "
 local serial = 0
 
 function M.highlights()
@@ -25,6 +27,8 @@ function M.highlights()
     ReviewSelected = "CursorLine",
     ReviewDraftCount = "Special",
     ReviewHelp = "Comment",
+    ReviewFilterBorder = "FloatBorder",
+    ReviewFilterPrompt = "Identifier",
     ReviewStatusOk = "DiagnosticOk",
     ReviewStatusWarn = "DiagnosticWarn",
     ReviewStatusError = "DiagnosticError",
@@ -145,6 +149,7 @@ function M.bind(session, buf)
     info = { function() session:show_info() end, "Show the MR/PR title and description" },
     toggle_comments = { function() session:toggle_comments() end, "Show or hide inline discussions" },
     toggle_viewed = { function() session:mark_viewed() end, "Toggle this file's local viewed state" },
+    files_picker = { function() session:pick_files() end, "Search review files in Telescope" },
   }
   for name, mapping in pairs(maps) do
     bind(session, buf, name, mapping[1], mapping[2])
@@ -176,6 +181,7 @@ function M.create(session)
     group = session.ui_group,
     callback = function()
       M.footer(session)
+      M.filter(session)
       if session.inline_comments then M.comments(session) end
     end,
   })
@@ -187,7 +193,7 @@ function M.create(session)
   M.bind(session, session.panel_buf)
   M.bind(session, session.viewer_buf)
   bind(session, session.panel_buf, "search_files", function() session:search_files() end,
-    "Search changed files in Telescope")
+    "Filter changed files in the review panel")
   local tree_actions = {
     panel_open = "open", panel_left = "left", panel_right = "right",
     panel_toggle = "toggle", panel_expand = "expand", panel_collapse = "collapse",
@@ -232,7 +238,8 @@ local function footer_hints(session)
     " " .. hint("panel_open", ":ReviewPanel open") .. " open/fold",
     " " .. hint("complete", ":ReviewComplete") .. " complete " .. session.provider.kind,
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
-    " " .. (M.search_files_key(session) or ":ReviewFiles") .. " search files (Telescope)",
+    " " .. (M.search_files_key(session) or ":ReviewFiles") .. " filter files",
+    " :ReviewFilesClear clear filter",
     " " .. (M.toggle_viewed_key(session) or ":ReviewToggleViewed") .. " toggle viewed",
     " " .. hint("thread", ":ReviewThread") .. " thread here",
     " " .. hint("threads", ":ReviewThreads") .. " all threads",
@@ -271,7 +278,7 @@ function M.footer(session)
   if not M.valid(session) or not vim.api.nvim_win_is_valid(session.panel_win) then return end
   local hints = footer_hints(session)
   local panel_height = vim.api.nvim_win_get_height(session.panel_win)
-  local height = math.min(#hints, math.max(1, panel_height - 2))
+  local height = math.min(#hints, math.max(1, panel_height - 6))
   local width = vim.api.nvim_win_get_width(session.panel_win)
   local row = panel_height - height
   if not session.help_buf or not vim.api.nvim_buf_is_valid(session.help_buf) then
@@ -302,12 +309,23 @@ function M.close(session)
     pcall(vim.api.nvim_del_augroup_by_id, session.ui_group)
     session.ui_group = nil
   end
+  if session.filter_win and vim.api.nvim_win_is_valid(session.filter_win) then
+    vim.api.nvim_win_close(session.filter_win, true)
+  end
   if session.help_win and vim.api.nvim_win_is_valid(session.help_win) then
     vim.api.nvim_win_close(session.help_win, true)
   end
 end
 
 local function directory_folds(session)
+  if vim.trim(session.file_filter or "") ~= "" then
+    local comparison = (session.base or "") .. ":" .. (session.head or "")
+    if session.filter_comparison ~= comparison then
+      session.filtered_folds, session.filter_comparison = {}, comparison
+    end
+    session.filtered_folds = session.filtered_folds or {}
+    return session.filtered_folds
+  end
   session.directory_folds = session.directory_folds or {}
   local comparison = (session.base or "") .. ":" .. (session.head or "")
   session.directory_folds[comparison] = session.directory_folds[comparison] or {}
@@ -315,8 +333,9 @@ local function directory_folds(session)
 end
 
 local function file_tree(session)
-  if not session.file_tree or session.file_tree.source ~= session.files then
-    session.file_tree = tree.build(session.files or {})
+  if not session.file_tree or session.file_tree.source ~= session.files
+      or session.file_tree.query ~= (session.file_filter or "") then
+    session.file_tree = tree.build(session.files or {}, session.file_filter)
   end
   return session.file_tree
 end
@@ -348,6 +367,132 @@ local function restore_panel_entry(session, item)
     if M.focus_panel_entry(session, { directory = parents[index] }) then return end
   end
   M.focus_panel_entry(session, { commit = session.commit_index })
+end
+
+local function input_query(session)
+  local lines = vim.api.nvim_buf_get_lines(session.filter_buf, 0, -1, false)
+  local line = lines[#lines] or ""
+  return line:sub(1, #filter_prompt) == filter_prompt and line:sub(#filter_prompt + 1) or line
+end
+
+local function sync_filter_input(session)
+  if not session.filter_buf or not vim.api.nvim_buf_is_valid(session.filter_buf) then return end
+  vim.api.nvim_buf_set_lines(session.filter_buf, 0, -1, false, { filter_prompt .. (session.file_filter or "") })
+  vim.bo[session.filter_buf].modified = false
+end
+
+local function focus_filter_result(session)
+  if M.focus_panel_entry(session, { file = session.file_index }) then return end
+  for row = 1, vim.api.nvim_buf_line_count(session.panel_buf) do
+    if (session.panel_entries[row] or {}).file then
+      vim.api.nvim_win_set_cursor(session.panel_win, { row, 0 })
+      return
+    end
+  end
+  M.focus_panel_entry(session, { commit = session.commit_index })
+end
+
+function M.set_filter(session, query, from_input)
+  if not M.valid(session) then return end
+  assert(type(query) == "string", "The review file filter must be a string.")
+  query = query:gsub("[\r\n]", " ")
+  local row = vim.api.nvim_win_get_cursor(session.panel_win)[1]
+  local anchor = (session.panel_entries or {})[row]
+  if query ~= (session.file_filter or "") then session.filtered_folds = nil end
+  session.file_filter = query
+  M.panel(session)
+  if not from_input then sync_filter_input(session) end
+  if vim.trim(query) == "" then restore_panel_entry(session, anchor)
+  else focus_filter_result(session) end
+end
+
+function M.finish_filter(session, query)
+  if not M.valid(session) then return end
+  query = query or input_query(session)
+  session.filter_editing = false
+  vim.cmd.stopinsert()
+  M.set_filter(session, query)
+  vim.api.nvim_set_current_win(session.panel_win)
+  if vim.trim(query) == "" then restore_panel_entry(session, session.filter_anchor)
+  else focus_filter_result(session) end
+end
+
+function M.filter(session)
+  if not M.valid(session) or not vim.api.nvim_win_is_valid(session.panel_win) then return end
+  if not session.filter_buf or not vim.api.nvim_buf_is_valid(session.filter_buf) then
+    local buf = scratch("review://" .. session.serial .. "/filter", "review-filter")
+    session.filter_buf = buf
+    vim.bo[buf].buftype = "prompt"
+    vim.fn.prompt_setprompt(buf, filter_prompt)
+    sync_filter_input(session)
+    vim.fn.prompt_setcallback(buf, function(query)
+      session.filter_editing = false
+      vim.schedule(function() if M.valid(session) then M.finish_filter(session, query) end end)
+    end)
+    vim.fn.prompt_setinterrupt(buf, function()
+      local query = input_query(session)
+      session.filter_editing = false
+      vim.schedule(function() if M.valid(session) then M.finish_filter(session, query) end end)
+    end)
+    vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+      group = session.ui_group, buffer = buf,
+      callback = function()
+        if M.valid(session) and session.filter_editing then
+          local query = input_query(session)
+          if query ~= session.file_filter then M.set_filter(session, query, true) end
+        end
+      end,
+    })
+    vim.api.nvim_create_autocmd("BufEnter", {
+      group = session.ui_group, buffer = buf,
+      callback = function()
+        if not M.valid(session) then return end
+        local row = vim.api.nvim_win_get_cursor(session.panel_win)[1]
+        session.filter_anchor = (session.panel_entries or {})[row]
+        session.filter_editing = true
+      end,
+    })
+    vim.api.nvim_create_autocmd("BufLeave", {
+      group = session.ui_group, buffer = buf,
+      callback = function()
+        if M.valid(session) and session.filter_editing then M.set_filter(session, input_query(session), true) end
+        session.filter_editing = false
+      end,
+    })
+    bind(session, buf, "filter_exit", function() M.finish_filter(session) end,
+      "Return to the filtered review tree", { "n", "i" })
+  end
+  local root = file_tree(session)
+  local width = math.max(1, vim.api.nvim_win_get_width(session.panel_win) - 2)
+  local config = {
+    relative = "win", win = session.panel_win, row = 0, col = 0,
+    width = width, height = 1, focusable = true, style = "minimal", border = "rounded",
+    title = " Files ", title_pos = "left", footer = (" %d/%d "):format(root.count, root.total),
+    footer_pos = "right",
+  }
+  if not session.filter_win or not vim.api.nvim_win_is_valid(session.filter_win) then
+    session.filter_win = vim.api.nvim_open_win(session.filter_buf, false, config)
+    vim.wo[session.filter_win].winhighlight = "NormalFloat:Normal,FloatBorder:ReviewFilterBorder,"
+      .. "FloatTitle:ReviewPanelTitle,FloatFooter:ReviewHelp"
+    vim.wo[session.filter_win].wrap = false
+    vim.wo[session.filter_win].cursorline = false
+  else
+    vim.api.nvim_win_set_config(session.filter_win, config)
+  end
+  vim.api.nvim_buf_clear_namespace(session.filter_buf, filter_namespace, 0, -1)
+  vim.api.nvim_buf_set_extmark(session.filter_buf, filter_namespace, 0, 0,
+    { end_col = #filter_prompt, hl_group = "ReviewFilterPrompt", strict = false })
+end
+
+function M.start_filter(session)
+  if not M.valid(session) then return end
+  M.filter(session)
+  sync_filter_input(session)
+  vim.api.nvim_set_current_win(session.filter_win)
+  session.filter_editing = true
+  local line = vim.api.nvim_buf_get_lines(session.filter_buf, 0, 1, false)[1]
+  vim.api.nvim_win_set_cursor(session.filter_win, { 1, #line })
+  vim.cmd.startinsert({ bang = true })
 end
 
 function M.panel_action(session, action)
@@ -408,11 +553,12 @@ end
 function M.panel(session)
   if not M.valid(session) or not vim.api.nvim_buf_is_valid(session.panel_buf) then return end
   local lines = {
+    "", "", "", "",
     session.provider.prefix .. session.target.iid .. " " .. (session.data and session.data.mr.title or "Loading…"),
     "",
   }
-  if session.refreshing and session.data then lines[1] = lines[1] .. " · refreshing…" end
-  local decorations = { { line = 1, start = 0, finish = #lines[1], group = "ReviewPanelTitle" } }
+  if session.refreshing and session.data then lines[5] = lines[5] .. " · refreshing…" end
+  local decorations = { { line = 5, start = 0, finish = #lines[5], group = "ReviewPanelTitle" } }
   session.panel_entries = {}
   local function highlight(line, start, finish, group)
     decorations[#decorations + 1] = { line = line, start = start, finish = finish, group = group }
@@ -482,8 +628,10 @@ function M.panel(session)
         end
       end
     end
-    children(file_tree(session), 0)
+    local root = file_tree(session)
+    children(root, 0)
     if session.files and #session.files == 0 then lines[#lines + 1] = "    No changed files" end
+    if root.total > 0 and root.count == 0 then lines[#lines + 1] = "    No files match this filter." end
   end
   entry((session.commit_index == 0 and "▾ " or "▸ ") .. "Complete " .. session.provider.label,
     { commit = 0 }, "ReviewCommit", session.commit_index == 0)
@@ -507,6 +655,7 @@ function M.panel(session)
       decoration.line - 1, decoration.start or 0, opts)
   end
   M.footer(session)
+  M.filter(session)
 end
 
 function M.file_title(session, current)
@@ -564,7 +713,7 @@ function M.render(session, current)
   -- A different line number belongs to each side; the buffer's own number
   -- includes deleted rows and must never be used for a provider position.
   vim.api.nvim_win_set_cursor(win, { 1, 0 })
-  vim.api.nvim_set_current_win(win)
+  if not session.filter_editing then vim.api.nvim_set_current_win(win) end
 end
 
 -- Wrap virtual text ourselves: virt_lines do not follow the window's wrap option.

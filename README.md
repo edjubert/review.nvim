@@ -54,7 +54,8 @@ Neovim configuration.
   for private repositories or publication.
 - Git access to the repository (SSH by default).
 - Optional: [`telescope.nvim`](https://github.com/nvim-telescope/telescope.nvim)
-  and its `plenary.nvim` dependency for `:ReviewPipelines` and `:ReviewFiles`.
+  and its `plenary.nvim` dependency for `:ReviewPipelines` and `:ReviewFilesPicker`.
+  The sidebar's file filter works without Telescope.
 
 ### Authentication
 
@@ -114,10 +115,12 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewPipelines", "ReviewFiles",
+    "Review", "ReviewInfo", "ReviewPipelines", "ReviewFiles", "ReviewFilesClear", "ReviewFilesPicker",
+    "ReviewNextCommit", "ReviewPrevCommit", "ReviewNextFile", "ReviewPrevFile",
+    "ReviewNextChange", "ReviewPrevChange", "ReviewComplete", "ReviewPanel",
     "ReviewViewed", "ReviewUnviewed", "ReviewToggleViewed",
     "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
-    "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit",
+    "ReviewThread", "ReviewThreads", "ReviewJump", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit",
     "ReviewApprove", "ReviewRequestChanges", "ReviewResolve", "ReviewResolveAll", "ReviewClose",
   },
   opts = {},
@@ -169,7 +172,9 @@ merge base.
 | `:ReviewPanel <action>` | Open or fold the selected panel entry |
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewPipelines` | Browse the GitLab MR's pipelines and jobs in Telescope |
-| `:ReviewFiles` | Search the current comparison's changed files in Telescope |
+| `:ReviewFiles [query]` | Focus the sidebar's live file filter, or apply a query |
+| `:ReviewFilesClear` | Clear the sidebar filter and restore its directory folds |
+| `:ReviewFilesPicker` | Search the current comparison's changed files in Telescope |
 | `:ReviewViewed` | Mark the file under the cursor viewed locally |
 | `:ReviewUnviewed` | Remove the file's local viewed marker |
 | `:ReviewToggleViewed` | Toggle the file's local viewed marker |
@@ -220,6 +225,7 @@ require("review").setup({
     info = "<leader>ri",
     toggle_comments = "<leader>rt",
     toggle_viewed = "<leader>rv",
+    files_picker = "<leader>rF",
     close = "q",
 
     -- Diff only; comment also works in visual mode.
@@ -238,6 +244,7 @@ require("review").setup({
     panel_collapse = "zc",
     panel_collapse_all = "zM",
     panel_expand_all = "zR",
+    filter_exit = "<Esc>", -- filter input, normal/insert: return to the tree
 
     -- Review document/comment windows.
     close_document = "q",
@@ -259,7 +266,9 @@ With that example enabled:
 | `h` / `l` in the panel | Collapse / expand directories or move to parent / first child |
 | `za` / `zo` / `zc` in the panel | Toggle / expand / collapse a directory |
 | `zM` / `zR` in the panel | Collapse / expand all directories |
-| `<leader>rf` in the panel | Search changed files in Telescope |
+| `<leader>rf` in the panel | Focus the live file filter |
+| `<leader>rF` in the panel or diff | Search changed files in Telescope |
+| `<Esc>` in the filter input | Return to the filtered tree |
 | `<leader>rv` in the panel or diff | Toggle the file's local viewed marker |
 | `]c` / `[c` | Next / previous commit |
 | `]f` / `[f` | Next / previous file |
@@ -280,7 +289,7 @@ With that example enabled:
 The panel uses your colorscheme for commits, directories and Git file statuses.
 Hints stay at the bottom in a muted color and reflect your configured shortcuts.
 When a shortcut is disabled, the hint shows its command instead.
-Highlight groups such as `ReviewHelp`, `ReviewDirectory`, `ReviewFileAdded`,
+Highlight groups such as `ReviewHelp`, `ReviewFilterBorder`, `ReviewFilterPrompt`, `ReviewDirectory`, `ReviewFileAdded`,
 `ReviewFileModified` and `ReviewFileDeleted` can be customized.
 
 With the example mappings, `3]h` jumps forward three change blocks.
@@ -295,7 +304,7 @@ opens any folds covering that line, and centers the diff view there.
 Changed files are grouped in nested, collapsible directories in the panel.
 Directories appear first, then files, alphabetically within each level.
 File rows show the basename, Git status and viewed marker; the full path remains
-visible in the diff title and `:ReviewFiles`.
+visible in the diff title and `:ReviewFilesPicker`.
 
 With the optional example mappings, press `Enter` on a directory to toggle it.
 `l` expands a closed directory or moves to its first child; on a file, it opens
@@ -313,21 +322,53 @@ Selecting a file through search, next/previous file navigation or a discussion
 jump expands its parent directories and reveals it in the panel. A collapsed directory containing
 the displayed file shows `◀`.
 
-### File search
+### File filter in the sidebar
 
-Run `:ReviewFiles` to search the changed files in the currently displayed commit
-or complete MR/PR comparison. Telescope searches both
-the new and old paths of renamed files. `Enter` opens the selected file's review
-diff and updates the panel selection. Added, modified, deleted, renamed and copied
-files are marked `A`, `M`, `D`, `R` and `C`.
+A search field stays at the top of the panel, above the commit/file tree.
+Its counter shows matching files / total files in the current Git comparison.
+Run `:ReviewFiles` to focus it and type: the tree updates as you edit the query.
+The diff stays open while filtering.
 
-The search uses the review's Git comparison; it does not search the working
-directory or open files from disk. If the comparison changes while the picker
-is open, reopen the search before selecting a file.
+Matching is case-insensitive and uses literal path fragments. All terms separated
+by whitespace must match the new or old path, including renamed files.
+For example, `transformation/` selects a directory's changed files, while
+`transformation/ sql` narrows them to paths containing both fragments.
+This filters changed files in the displayed commit or complete MR/PR comparison.
 
-Configure `keymaps.search_files` to enable a panel shortcut.
-It defaults to `false`; `:ReviewFiles` is always available.
-File search requires `telescope.nvim` and `plenary.nvim`.
+Only matching files and their parent directories remain in the tree. Matching
+folders start expanded and can still be folded; their filter-specific fold state
+is separate from the unfiltered tree. Git status colors, viewed markers and the
+original file/commit references are preserved. A query with no matches shows an
+empty-results message and leaves the current diff available.
+
+The prompt's native `Enter` accepts the query and focuses the matching file in
+the tree; `Ctrl-C` returns to the tree while keeping the filter.
+Open a result with `:ReviewPanel open` or your configured panel mapping.
+An optional `keymaps.filter_exit` can also return to the tree.
+
+| Command | Action |
+| --- | --- |
+| `:ReviewFiles` | Focus the input and edit the query |
+| `:ReviewFiles transformation/` | Apply a query without focusing the input |
+| `:ReviewFilesClear` | Clear the query and restore the original directory folds |
+
+The query stays active across commits and refreshes; the counter follows the
+displayed comparison. Next/previous file navigation skips files hidden by the
+filter. Configure `keymaps.search_files` to enable a panel shortcut; it defaults
+to `false`. The sidebar filter needs no picker dependency.
+
+### File search in Telescope
+
+Run `:ReviewFilesPicker` to search all changed files in the current comparison,
+including ones hidden by the sidebar filter. Telescope searches both old and new
+paths. Its selection action opens the chosen review diff and updates the panel;
+choosing a hidden file clears the sidebar filter to reveal it.
+Added, modified, deleted, renamed and copied files are marked `A`, `M`, `D`, `R` and `C`.
+
+The picker uses the review's Git comparison rather than files from the working
+directory. If that comparison changes, reopen the picker before selecting a file.
+Configure `keymaps.files_picker` to enable a shortcut; it defaults to `false`.
+This command requires `telescope.nvim` and `plenary.nvim`.
 
 ### Viewed files
 
@@ -336,7 +377,7 @@ displayed in the diff. Use `:ReviewUnviewed` to remove the marker.
 `:ReviewToggleViewed` switches between the two states.
 Opening a file leaves its viewed state unchanged.
 
-The panel and `:ReviewFiles` display `[x]` for viewed files and `[ ]` for unviewed
+The panel and `:ReviewFilesPicker` display `[x]` for viewed files and `[ ]` for unviewed
 files. The panel also shows `Viewed: N/M files` for the current comparison, and
 the diff's title shows `[viewed]` or `[unviewed]`. Customize `ReviewFileViewed`
 to change the viewed marker's color.
@@ -690,7 +731,8 @@ require("review").setup({
 - Text files; binary files display a notice.
 - Commit diffs compare against the first parent. Root commits are not supported.
 - Pipeline/check status, approval and change requests on all providers.
-- GitLab pipeline/job details and file search on all providers via optional Telescope.
+- Live file filtering in the sidebar on all providers, without a picker dependency.
+- GitLab pipeline/job details and a separate file picker via optional Telescope.
 - Local viewed/unviewed progress on all providers, scoped to each Git comparison.
 - Discussion reading and new comments on all providers; replies on GitLab and
   GitHub. Conversation resolution on GitLab. Codeberg reply drafts and GitHub/

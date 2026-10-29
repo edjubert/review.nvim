@@ -6,6 +6,7 @@ local position = require("review.position")
 local drafts = require("review.drafts")
 local viewed = require("review.viewed")
 local threads = require("review.threads")
+local tree = require("review.tree")
 local ui = require("review.ui")
 local Session = {}
 Session.__index = Session
@@ -20,7 +21,7 @@ function Session.new(target, config)
     provider = providers.for_target(target),
     inline_comments = config.inline_comments == true,
     thread_documents = {}, thread_views = {},
-    directory_folds = {},
+    directory_folds = {}, file_filter = "",
     commit_index = 0, files = {}, closed = false, generation = 0,
   }, Session)
   self:reload_viewed()
@@ -174,6 +175,10 @@ function Session:select_commit(index, selection)
         notify("The commented file is not part of this comparison.", vim.log.levels.WARN)
         return
       end
+    elseif vim.trim(self.file_filter or "") ~= "" then
+      for i, file in ipairs(files) do
+        if tree.matches(file, self.file_filter) then file_index = i; break end
+      end
     end
     if #files > 0 then self:select_file(file_index, selection)
     else ui.empty(self, "This comparison contains no changed files.") end
@@ -186,6 +191,9 @@ function Session:select_file(index, selection)
   self.generation = self.generation + 1
   local generation, base, head = self.generation, self.base, self.head
   self.file_index, self.current = index, nil
+  if selection and selection.require_path and not tree.matches(file, self.file_filter) then
+    ui.set_filter(self, "")
+  end
   ui.reveal_file(self, file)
   ui.empty(self, "Loading " .. file.new_path .. "…")
   ui.panel(self)
@@ -285,7 +293,12 @@ function Session:move_commit(delta)
 end
 
 function Session:move_file(delta)
-  self:select_file((self.file_index or 0) + delta)
+  if delta == 0 then return end
+  local index = (self.file_index or 0) + delta
+  while self.files[index] do
+    if tree.matches(self.files[index], self.file_filter) then self:select_file(index); return end
+    index = index + delta
+  end
 end
 
 function Session:move_hunk(direction, count)
@@ -490,7 +503,16 @@ function Session:mark_viewed(enabled)
   notify((value and "Viewed: " or "Unviewed: ") .. file.new_path)
 end
 
-function Session:search_files()
+function Session:search_files(query)
+  if self.closed or not ui.valid(self) then return end
+  if type(query) == "string" and query ~= "" then
+    ui.set_filter(self, query)
+  else
+    ui.start_filter(self)
+  end
+end
+
+function Session:pick_files()
   if self.closed or not ui.valid(self) then return end
   if self.refreshing then notify("Wait for the review refresh to finish.", vim.log.levels.WARN); return end
   if not self.ready or not self.base or not self.head then
@@ -798,6 +820,7 @@ function Session:jump_thread(discussion, close)
   end
   local function focus(row)
     if close and close() == false then return end
+    if not tree.matches(self.current.file, self.file_filter) then ui.set_filter(self, "") end
     vim.api.nvim_set_current_win(self.viewer_win)
     vim.api.nvim_win_set_cursor(self.viewer_win, { row, 0 })
     vim.cmd.normal({ args = { "zvzz" }, bang = true })

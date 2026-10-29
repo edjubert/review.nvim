@@ -11,25 +11,40 @@ function M.parents(path)
   return parents
 end
 
-function M.build(files)
-  local root = { children = {}, directories = {}, source = files, path = "" }
+function M.matches(file, query)
+  local paths = ((file.new_path or "") .. "\n" .. (file.old_path or "")):lower()
+  for term in (query or ""):lower():gmatch("%S+") do
+    if not paths:find(term, 1, true) then return false end
+  end
+  return true
+end
+
+function M.build(files, query)
+  local root = {
+    children = {}, directories = {}, source = files, path = "",
+    query = query or "", count = 0, total = #files,
+  }
   for index, file in ipairs(files) do
-    local parent = root
-    for _, path in ipairs(M.parents(file.new_path)) do
-      local directory = parent.directories[path]
-      if not directory then
-        directory = {
-          directory = path, path = path, name = path:match("[^/]+$"),
-          parent = parent.path, children = {}, directories = {},
-        }
-        parent.directories[path] = directory
-        parent.children[#parent.children + 1] = directory
+    if M.matches(file, query) then
+      root.count = root.count + 1
+      local parent = root
+      for _, path in ipairs(M.parents(file.new_path)) do
+        local directory = parent.directories[path]
+        if not directory then
+          directory = {
+            directory = path, path = path, name = path:match("[^/]+$"),
+            parent = parent.path, children = {}, directories = {},
+          }
+          parent.directories[path] = directory
+          parent.children[#parent.children + 1] = directory
+        end
+        parent = directory
       end
-      parent = directory
+      -- Keep the original index: filtering must not change Git/comment metadata.
+      parent.children[#parent.children + 1] = {
+        file = index, path = file.new_path, name = file.new_path:match("[^/]+$"), parent = parent.path,
+      }
     end
-    parent.children[#parent.children + 1] = {
-      file = index, path = file.new_path, name = file.new_path:match("[^/]+$"), parent = parent.path,
-    }
   end
   local function sort(node)
     table.sort(node.children, function(a, b)
