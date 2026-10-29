@@ -77,109 +77,77 @@ function M.valid(session)
   return not session.closed and session.tab and vim.api.nvim_tabpage_is_valid(session.tab)
 end
 
+function M.key(session, name)
+  return (session.config.keymaps or {})[name] or false
+end
+
 function M.comment_key(session)
-  local key = (session.config.keymaps or {}).comment
-  if key == nil then return "<leader>rc" end
-  return key
+  return M.key(session, "comment")
 end
 
 function M.submit_key(session)
-  local key = (session.config.keymaps or {}).submit
-  if key == nil then return "<leader>rs" end
-  return key
+  return M.key(session, "submit")
 end
 
 function M.refresh_key(session)
-  local key = (session.config.keymaps or {}).refresh
-  if key == nil then return "<leader>rr" end
-  return key
+  return M.key(session, "refresh")
 end
 
 function M.info_key(session)
-  local key = (session.config.keymaps or {}).info
-  if key == nil then return "<leader>ri" end
-  return key
+  return M.key(session, "info")
 end
 
 function M.toggle_comments_key(session)
-  local key = (session.config.keymaps or {}).toggle_comments
-  if key == nil then return "<leader>rt" end
-  return key
+  return M.key(session, "toggle_comments")
 end
 
 function M.reply_key(session)
-  local key = (session.config.keymaps or {}).reply
-  if key == nil then return "<leader>rR" end
-  return key
+  return M.key(session, "reply")
 end
 
 function M.open_comment_key(session)
-  local key = (session.config.keymaps or {}).open_comment
-  if key == nil then return "<leader>ro" end
-  return key
+  return M.key(session, "open_comment")
 end
 
 function M.search_files_key(session)
-  local key = (session.config.keymaps or {}).search_files
-  if key == nil then return "/" end
-  return key
+  return M.key(session, "search_files")
 end
 
 function M.toggle_viewed_key(session)
-  local key = (session.config.keymaps or {}).toggle_viewed
-  if key == nil then return "<leader>rv" end
-  return key
+  return M.key(session, "toggle_viewed")
+end
+
+local function bind(session, buf, name, callback, description, mode)
+  local key = M.key(session, name)
+  if key then
+    vim.keymap.set(mode or "n", key, callback, { buffer = buf, silent = true, desc = description })
+  end
 end
 
 function M.bind_open_comment(session, buf)
-  local key = M.open_comment_key(session)
-  if key then
-    vim.keymap.set("n", key, function() session:open_comment() end,
-      { buffer = buf, silent = true, desc = "Open this comment in the browser" })
-  end
+  bind(session, buf, "open_comment", function() session:open_comment() end, "Open this comment in the browser")
 end
 
 function M.bind(session, buf)
   local maps = {
-    ["]c"] = function() session:move_commit(1) end,
-    ["[c"] = function() session:move_commit(-1) end,
-    ["]f"] = function() session:move_file(1) end,
-    ["[f"] = function() session:move_file(-1) end,
-    ["]h"] = function() session:move_hunk(1, vim.v.count1) end,
-    ["[h"] = function() session:move_hunk(-1, vim.v.count1) end,
-    ["gA"] = function() session:select_commit(0) end,
-    ["gd"] = function() session:show_drafts() end,
-    ["gt"] = function() session:show_thread_at_cursor() end,
-    ["gT"] = function() session:show_threads() end,
-    ["q"] = function() session:close() end,
+    next_commit = { function() session:move_commit(1) end, "Next review commit" },
+    prev_commit = { function() session:move_commit(-1) end, "Previous review commit" },
+    next_file = { function() session:move_file(1) end, "Next review file" },
+    prev_file = { function() session:move_file(-1) end, "Previous review file" },
+    next_hunk = { function() session:move_hunk(1, vim.v.count1) end, "Next review change" },
+    prev_hunk = { function() session:move_hunk(-1, vim.v.count1) end, "Previous review change" },
+    complete = { function() session:select_commit(0) end, "Complete MR/PR comparison" },
+    drafts = { function() session:show_drafts() end, "Inspect local review drafts" },
+    threads = { function() session:show_threads() end, "Read all review discussions" },
+    close = { function() session:close() end, "Close the review tab" },
+    submit = { function() session:submit() end, "Preview and submit review drafts" },
+    refresh = { function() session:refresh() end, "Refresh the review" },
+    info = { function() session:show_info() end, "Show the MR/PR title and description" },
+    toggle_comments = { function() session:toggle_comments() end, "Show or hide inline discussions" },
+    toggle_viewed = { function() session:mark_viewed() end, "Toggle this file's local viewed state" },
   }
-  for key, callback in pairs(maps) do
-    vim.keymap.set("n", key, callback, { buffer = buf, silent = true })
-  end
-  local submit_key = M.submit_key(session)
-  if submit_key then
-    vim.keymap.set("n", submit_key, function() session:submit() end,
-      { buffer = buf, silent = true, desc = "Preview and submit review drafts" })
-  end
-  local refresh_key = M.refresh_key(session)
-  if refresh_key then
-    vim.keymap.set("n", refresh_key, function() session:refresh() end,
-      { buffer = buf, silent = true, desc = "Refresh the review" })
-  end
-  local info_key = M.info_key(session)
-  if info_key then
-    vim.keymap.set("n", info_key, function() session:show_info() end,
-      { buffer = buf, silent = true, desc = "Show the MR/PR title and description" })
-  end
-  local toggle_comments_key = M.toggle_comments_key(session)
-  if toggle_comments_key then
-    vim.keymap.set("n", toggle_comments_key, function() session:toggle_comments() end,
-      { buffer = buf, silent = true, desc = "Show or hide inline discussions" })
-  end
-  local toggle_viewed_key = M.toggle_viewed_key(session)
-  if toggle_viewed_key then
-    vim.keymap.set("n", toggle_viewed_key, function() session:mark_viewed() end,
-      { buffer = buf, silent = true, desc = "Toggle this file's local viewed state" })
+  for name, mapping in pairs(maps) do
+    bind(session, buf, name, mapping[1], mapping[2])
   end
 end
 
@@ -218,19 +186,19 @@ function M.create(session)
   })
   M.bind(session, session.panel_buf)
   M.bind(session, session.viewer_buf)
-  local search_files_key = M.search_files_key(session)
-  if search_files_key then
-    vim.keymap.set("n", search_files_key, function() session:search_files() end,
-      { buffer = session.panel_buf, silent = true, desc = "Search changed files in Telescope" })
-  end
+  bind(session, session.panel_buf, "search_files", function() session:search_files() end,
+    "Search changed files in Telescope")
   local tree_actions = {
-    ["<CR>"] = "open", h = "left", l = "right",
-    za = "toggle", zo = "expand", zc = "collapse", zM = "collapse_all", zR = "expand_all",
+    panel_open = "open", panel_left = "left", panel_right = "right",
+    panel_toggle = "toggle", panel_expand = "expand", panel_collapse = "collapse",
+    panel_collapse_all = "collapse_all", panel_expand_all = "expand_all",
   }
-  for key, action in pairs(tree_actions) do
-    vim.keymap.set("n", key, function() M.panel_action(session, action) end,
-      { buffer = session.panel_buf, silent = true, desc = "Review tree: " .. action })
+  for name, action in pairs(tree_actions) do
+    bind(session, session.panel_buf, name, function() M.panel_action(session, action) end,
+      "Review tree: " .. action)
   end
+  bind(session, session.viewer_buf, "thread", function() session:show_thread_at_cursor() end,
+    "Read discussions on this review line")
   local comment_key = M.comment_key(session)
   if comment_key then
     vim.keymap.set({ "n", "x" }, comment_key, function()
@@ -257,23 +225,41 @@ function M.create(session)
 end
 
 local function footer_hints(session)
+  local function hint(name, command)
+    return M.key(session, name) or command
+  end
   local hints = {
-    " Enter open/fold · h/l tree · gA all",
+    " " .. hint("panel_open", ":ReviewPanel open") .. " open/fold",
+    " " .. hint("complete", ":ReviewComplete") .. " complete " .. session.provider.kind,
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
-    " ]c/[c commits · ]f/[f files · zM/zR folds",
     " " .. (M.search_files_key(session) or ":ReviewFiles") .. " search files (Telescope)",
     " " .. (M.toggle_viewed_key(session) or ":ReviewToggleViewed") .. " toggle viewed",
-    " ]h/[h next/previous change",
-    " gt thread here · gT all threads",
+    " " .. hint("thread", ":ReviewThread") .. " thread here",
+    " " .. hint("threads", ":ReviewThreads") .. " all threads",
     " " .. (M.reply_key(session) or ":ReviewReply") .. " reply to thread",
     " " .. (M.open_comment_key(session) or ":ReviewOpenComment") .. " open comment URL",
     " " .. (M.toggle_comments_key(session) or ":ReviewToggleComments")
       .. " inline comments (" .. (session.inline_comments and "on" or "off") .. ")",
-    " gd drafts · " .. (M.info_key(session) or ":ReviewInfo") .. " info",
+    " " .. hint("drafts", ":ReviewDrafts") .. " drafts",
+    " " .. (M.info_key(session) or ":ReviewInfo") .. " info",
     " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh " .. session.provider.kind,
-    " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
+    " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit",
+    " " .. hint("close", ":ReviewClose") .. " close",
     " :ReviewApprove / :ReviewRequestChanges",
   }
+  for _, pair in ipairs({
+    { "next_commit", "prev_commit", "commits" },
+    { "next_file", "prev_file", "files" },
+    { "next_hunk", "prev_hunk", "changes" },
+    { "panel_left", "panel_right", "tree" },
+    { "panel_collapse_all", "panel_expand_all", "folds" },
+  }) do
+    local forward, backward = M.key(session, pair[1]), M.key(session, pair[2])
+    if forward or backward then
+      hints[#hints + 1] = " " .. table.concat(vim.tbl_filter(function(key) return key ~= false end,
+        { forward, backward }), "/") .. " " .. pair[3]
+    end
+  end
   if session.provider.pipelines then hints[#hints + 1] = " :ReviewPipelines details (Telescope)" end
   if session.provider.resolve then hints[#hints + 1] = " :ReviewResolve / :ReviewResolveAll" end
   return hints
@@ -634,7 +620,8 @@ local function inline_discussion(session, discussion)
       if reaction_text then append("  │  ", reaction_text, "ReviewCommentReaction") end
     end
   end
-  append("  ╰─ ", "gt: full discussion · " .. (M.reply_key(session) or ":ReviewReply") .. ": reply · "
+  append("  ╰─ ", (M.key(session, "thread") or ":ReviewThread") .. ": full discussion · "
+    .. (M.reply_key(session) or ":ReviewReply") .. ": reply · "
     .. (M.open_comment_key(session) or ":ReviewOpenComment") .. ": browser", "ReviewHelp")
   return lines
 end
@@ -667,7 +654,7 @@ function M.comments(session)
     local row = threads.row(discussion, current)
     if row then
       labels[row] = labels[row] or {}
-      labels[row][#labels[row] + 1] = "discussion (gt)"
+      labels[row][#labels[row] + 1] = "discussion (" .. (M.key(session, "thread") or ":ReviewThread") .. ")"
       if session.inline_comments then
         blocks[row] = blocks[row] or {}
         vim.list_extend(blocks[row], inline_discussion(session, discussion))
@@ -691,7 +678,7 @@ function M.empty(session, message)
   end
 end
 
-local function float(title, lines, writable)
+local function float(title, lines, writable, config)
   serial = serial + 1
   local buf = scratch("review://float/" .. serial, "markdown")
   set_lines(buf, lines)
@@ -706,12 +693,19 @@ local function float(title, lines, writable)
     style = "minimal", border = "rounded", title = " " .. title .. " ",
   })
   vim.wo[win].wrap = true
-  vim.keymap.set("n", "q", function() vim.api.nvim_win_close(win, true) end, { buffer = buf })
+  local close_key = (config.keymaps or {}).close_document
+  if close_key then
+    vim.keymap.set("n", close_key, function() vim.api.nvim_win_close(win, true) end,
+      { buffer = buf, silent = true, desc = "Close this review window" })
+  end
   return buf, win
 end
 
-function M.compose(title, body, saved)
-  local buf, win = float(title .. " · Ctrl-S or :w saves locally", vim.split(body or "", "\n"), true)
+function M.compose(title, body, saved, config)
+  config = config or require("review").config
+  local save_key = (config.keymaps or {}).save_draft
+  local buf, win = float(title .. " · " .. (save_key and save_key .. " or " or "") .. ":w saves locally",
+    vim.split(body or "", "\n"), true, config)
   local function save()
     local text = vim.trim(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
     if text == "" then
@@ -726,13 +720,16 @@ function M.compose(title, body, saved)
     vim.notify("Comment saved as a local draft.", vim.log.levels.INFO, { title = "review" })
   end
   vim.api.nvim_create_autocmd("BufWriteCmd", { buffer = buf, callback = save })
-  vim.keymap.set({ "n", "i" }, "<C-s>", save, { buffer = buf, desc = "Save local draft" })
+  if save_key then
+    vim.keymap.set({ "n", "i" }, save_key, save, { buffer = buf, silent = true, desc = "Save local draft" })
+  end
   return buf, win
 end
 
 function M.document(title, lines, opts)
   opts = opts or {}
-  local buf, win = float(title, #lines > 0 and lines or { opts.empty or "Nothing to display." }, false)
+  local config = opts.config or require("review").config
+  local buf, win = float(title, #lines > 0 and lines or { opts.empty or "Nothing to display." }, false, config)
   if opts.on_select then
     vim.wo[win].cursorline = true
     local function close()
@@ -740,10 +737,13 @@ function M.document(title, lines, opts)
       vim.api.nvim_win_close(win, true)
       return true
     end
-    vim.keymap.set("n", "<CR>", function()
-      local entry = (opts.entries or {})[vim.api.nvim_win_get_cursor(win)[1]]
-      if entry then opts.on_select(entry, close) end
-    end, { buffer = buf, silent = true, desc = "Jump to the comment line" })
+    local select_key = (config.keymaps or {}).select_comment
+    if select_key then
+      vim.keymap.set("n", select_key, function()
+        local entry = (opts.entries or {})[vim.api.nvim_win_get_cursor(win)[1]]
+        if entry then opts.on_select(entry, close) end
+      end, { buffer = buf, silent = true, desc = "Jump to the comment line" })
+    end
   end
   return buf, win
 end

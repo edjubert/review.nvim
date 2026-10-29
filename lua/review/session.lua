@@ -334,7 +334,7 @@ function Session:comment_position(current, first, last)
   for _, row in ipairs(selected) do
     local mapped_line = row[key] and map[row[key]]
     if not mapped_line then
-      error("A later commit changed this line. Select its current position in the complete review view (gA).", 0)
+      error("A later commit changed this line. Select its current position in the complete review view (:ReviewComplete).", 0)
     end
     local target_row = parsed["by_" .. side][mapped_line]
     if not target_row then error("This line is outside " .. self.provider.name .. "'s commentable diff context.", 0) end
@@ -369,7 +369,7 @@ function Session:comment(first, last)
         path = current.file.new_path, base = current.base, head = current.head,
         old_line = row.old_line, new_line = row.new_line,
       })
-    end)
+    end, self.config)
   end, nil, generation)
 end
 
@@ -385,7 +385,7 @@ function Session:reply()
   for _, discussion in ipairs(self.data.discussions or {}) do
     if threads.contains(discussion, self.current, row) then selected[#selected + 1] = discussion end
   end
-  if #selected == 0 then notify("No discussion on this line. Use gT to see all discussions."); return end
+  if #selected == 0 then notify("No discussion on this line. Use :ReviewThreads to see all discussions."); return end
   if not self.provider.reply_target or not self.provider.reply or not self.provider.validate_reply then
     notify("Reply drafts are not supported by the " .. self.provider.name .. " provider.", vim.log.levels.WARN)
     return
@@ -404,7 +404,7 @@ function Session:reply()
     ui.compose(("Reply to @%s · %s:%d"):format(author, current.file.new_path, anchor.last), "", function(body)
       if not ui.valid(self) then error("The review is closed. Reopen it before saving this reply.", 0) end
       self:save_draft(body, p, current.head, display, destination)
-    end)
+    end, self.config)
   end
   if #selected == 1 then compose(selected[1]); return end
   vim.ui.select(selected, {
@@ -439,7 +439,7 @@ function Session:show_drafts()
         ui.compose("Edit local draft", draft.body, function(body)
           draft.body = body
           drafts.save(self.config, self.target, self.drafts)
-        end)
+        end, self.config)
       elseif action == "Delete locally" then
         for i, candidate in ipairs(self.drafts) do
           if candidate.id == draft.id then table.remove(self.drafts, i); break end
@@ -539,7 +539,8 @@ function Session:show_info()
   else
     vim.list_extend(lines, vim.split(description:gsub("\r\n", "\n"), "\n", { plain = true }))
   end
-  ui.document(("%s %s%d · q: close"):format(self.provider.name, self.provider.prefix, self.target.iid), lines)
+  ui.document(("%s %s%d · %s: close"):format(self.provider.name, self.provider.prefix, self.target.iid,
+    ui.key(self, "close_document") or ":q"), lines, { config = self.config })
 end
 
 function Session:toggle_comments()
@@ -552,7 +553,7 @@ end
 function Session:show_thread_at_cursor()
   if not self.data or not self.current or not self.current.rows
       or vim.api.nvim_get_current_buf() ~= self.viewer_buf then
-    notify("Use gt on a review diff line; gT opens all discussions.", vim.log.levels.WARN)
+    notify("Use :ReviewThread on a review diff line; :ReviewThreads opens all discussions.", vim.log.levels.WARN)
     return
   end
   local row = vim.api.nvim_win_get_cursor(0)[1]
@@ -561,7 +562,7 @@ function Session:show_thread_at_cursor()
     if threads.contains(discussion, self.current, row) then selected[#selected + 1] = discussion end
   end
   if #selected == 0 then
-    notify("No discussion on this line. Use gT to see all discussions.")
+    notify("No discussion on this line. Use :ReviewThreads to see all discussions.")
     return
   end
   self:show_threads(selected, "Discussion under cursor")
@@ -595,7 +596,7 @@ function Session:open_comment()
   for _, discussion in ipairs(self.data.discussions or {}) do
     if threads.contains(discussion, self.current, row) then selected[#selected + 1] = discussion end
   end
-  if #selected == 0 then notify("No discussion on this line. Use gT to see all discussions."); return end
+  if #selected == 0 then notify("No discussion on this line. Use :ReviewThreads to see all discussions."); return end
   if #selected == 1 then open(threads.root(selected[1])); return end
   local generation = self.generation
   vim.ui.select(selected, {
@@ -615,7 +616,9 @@ function Session:show_threads(discussions, title)
   local lines, entries, comments = threads.document(discussions or self.data.discussions)
   local key = ui.open_comment_key(self) or ":ReviewOpenComment"
   local buf = ui.document((title or (self.provider.name .. " discussions"))
-    .. " · Enter: line · " .. key .. ": browser · q: close", lines, {
+    .. " · " .. (ui.key(self, "select_comment") or ":ReviewJump") .. ": line · " .. key
+    .. ": browser · " .. (ui.key(self, "close_document") or ":q") .. ": close", lines, {
+    config = self.config,
     empty = "No discussions in this review.",
     entries = entries,
     on_select = function(discussion, close) self:jump_thread(discussion, close) end,
@@ -646,7 +649,7 @@ function Session:update_discussion_views()
         if not view.ids or view.ids[discussion.id] then selected[#selected + 1] = discussion end
       end
       local lines, entries, comments = threads.document(selected)
-      -- The document's Enter mapping closes over its original entries table.
+      -- The document's optional selection mapping uses its original entries table.
       for key in pairs(view.entries) do view.entries[key] = nil end
       for key, entry in pairs(entries) do view.entries[key] = entry end
       self.thread_documents[buf] = comments
@@ -773,6 +776,18 @@ function Session:resolve_all()
   end, function() self.resolving = false end)
 end
 
+function Session:jump_thread_at_cursor()
+  local view = self.thread_views[vim.api.nvim_get_current_buf()]
+  local win = vim.api.nvim_get_current_win()
+  local discussion = view and view.entries[vim.api.nvim_win_get_cursor(win)[1]]
+  if not discussion then notify("Use :ReviewJump on a discussion in a review window."); return end
+  self:jump_thread(discussion, function()
+    if not vim.api.nvim_win_is_valid(win) then return false end
+    vim.api.nvim_win_close(win, true)
+    return true
+  end)
+end
+
 function Session:jump_thread(discussion, close)
   if not self.ready or not ui.valid(self) or not vim.api.nvim_win_is_valid(self.viewer_win) then return end
   if self.refreshing then notify("Wait for the review refresh to finish.", vim.log.levels.WARN); return end
@@ -868,7 +883,8 @@ function Session:submit()
     vim.list_extend(preview, vim.split(draft.body, "\n", { plain = true }))
     preview[#preview + 1] = ""
   end
-  ui.document("Review drafts · q closes preview", preview)
+  ui.document("Review drafts · " .. (ui.key(self, "close_document") or ":q") .. " closes preview",
+    preview, { config = self.config })
   local publish_choice = "Publish " .. #self.drafts .. " comment(s) to " .. self.provider.name
   local changes_choice = publish_choice .. " and request changes"
   local choices = { "Keep local", publish_choice }

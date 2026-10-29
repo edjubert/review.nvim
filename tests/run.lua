@@ -40,7 +40,16 @@ local emoji = require("review.emoji")
 local target = assert(url.parse("https://gitlab.example/group/nested/repo/-/merge_requests/12/commits?x=1"))
 local root = vim.fn.tempname()
 vim.fn.mkdir(root, "p")
-local config = { state_dir = root .. "/state", cache_dir = root .. "/cache", panel_width = 30 }
+local config = {
+  state_dir = root .. "/state", cache_dir = root .. "/cache", panel_width = 30,
+  -- Mapping fixtures opt in explicitly; the plugin has no default shortcuts.
+  keymaps = {
+    comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr",
+    info = "<leader>ri", toggle_comments = "<leader>rt", reply = "<leader>rR",
+    open_comment = "<leader>ro", complete = "gA", next_hunk = "]h", prev_hunk = "[h",
+    close_document = "q", select_comment = "<CR>", save_draft = "<C-s>",
+  },
+}
 local refs = { base_sha = "base", start_sha = "start", head_sha = "head" }
 local file = { old_path = "old.txt", new_path = "new.txt" }
 
@@ -258,7 +267,7 @@ test("Ctrl-S persists the draft and closes the editor without publication", func
   local s = Session.new(target, config)
   local p = assert(position.build(refs, file, { { kind = "add", new_line = 4 } }))
   local body = "Persist this draft :thinking: :question:"
-  local buf, win = ui.compose("Ctrl-S fixture", body, function(text) s:save_draft(text, p, "head") end)
+  local buf, win = ui.compose("Ctrl-S fixture", body, function(text) s:save_draft(text, p, "head") end, config)
   eq(vim.api.nvim_buf_get_lines(buf, 0, -1, false), { body })
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("i<C-s>", true, false, true), "xt", false)
   eq(#drafts.load(config, target), 1)
@@ -548,7 +557,7 @@ test("inline discussions default to hidden and validate their configuration", fu
   local before = vim.deepcopy(review.config)
   review.setup()
   eq(review.config.inline_comments, false)
-  eq(review.config.keymaps.toggle_comments, "<leader>rt")
+  eq(review.config.keymaps.toggle_comments, false)
   raises(function() review.setup({ inline_comments = "yes" }) end, "must be a boolean")
   raises(function() review.setup({ keymaps = { toggle_comments = true } }) end, "toggle_comments")
   review.setup(before)
@@ -1024,7 +1033,7 @@ end)
 test("comment browser shortcut is configurable in diff and discussion buffers and can be disabled", function()
   local review, before = require("review"), vim.deepcopy(require("review").config)
   review.setup()
-  eq(review.config.keymaps.open_comment, "<leader>ro")
+  eq(review.config.keymaps.open_comment, false)
   raises(function() review.setup({ keymaps = { open_comment = true } }) end, "keymaps.open_comment")
   review.setup(before)
   for _, key in ipairs({ "<leader>ro", "<leader>rO", false }) do

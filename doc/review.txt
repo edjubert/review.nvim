@@ -36,17 +36,17 @@ COMMANDS
 
 :ReviewInfo                                                     *:ReviewInfo*
     Show the loaded MR/PR title and description in a read-only Markdown
-    window. q closes it. Empty descriptions display "No description provided."
+    window. :q closes it. Empty descriptions display "No description provided."
     Use :ReviewRefresh to retrieve updated metadata.
 
 :[range]ReviewComment                                        *:ReviewComment*
     Draft a comment on the current diff line or a visual line selection.
-    Ctrl-S or :w in the comment editor saves locally. q cancels.
+    :w in the comment editor saves locally. :q! cancels.
 
 :ReviewReply                                                  *:ReviewReply*
     Draft a reply to an existing discussion on the current diff line.
     Any line in a commented range works. Select a discussion when several
-    cover the line. Ctrl-S or :w saves locally; :ReviewSubmit publishes
+    cover the line. :w saves locally; :ReviewSubmit publishes
     only after explicit confirmation. Supported on GitLab and GitHub.
 
 :ReviewDrafts                                                *:ReviewDrafts*
@@ -62,7 +62,29 @@ COMMANDS
 
 :ReviewThreads                                              *:ReviewThreads*
     Read all discussions across the MR/PR.
-    Enter on a discussion jumps to its comment line; q closes the window.
+    :ReviewJump on a discussion jumps to its comment line; :q closes the window.
+
+:ReviewThread                                                *:ReviewThread*
+    Read discussions attached to the current diff line or range.
+
+:ReviewJump                                                    *:ReviewJump*
+    In a discussion window, jump to the selected comment's diff line.
+
+:ReviewNextCommit / :ReviewPrevCommit                    *:ReviewNextCommit*
+    Select the next/previous commit in the review.
+
+:ReviewNextFile / :ReviewPrevFile                            *:ReviewNextFile*
+    Select the next/previous changed file.
+
+:[count]ReviewNextChange / :[count]ReviewPrevChange         *:ReviewNextChange*
+    Jump forward/backward through change blocks in the current file.
+
+:ReviewComplete                                            *:ReviewComplete*
+    Open the complete MR/PR comparison.
+
+:ReviewPanel {action}                                         *:ReviewPanel*
+    Act on the panel entry under the panel's cursor, from either review window.
+    Actions: open, left, right, toggle, expand, collapse, collapse_all, expand_all.
 
 :ReviewToggleComments                                *:ReviewToggleComments*
     Show or hide discussion messages and replies below their diff lines.
@@ -88,20 +110,19 @@ COMMANDS
     Close the review tab.
 
 ==============================================================================
-MAPPINGS
+OPTIONAL MAPPINGS                                           *review-mappings*
 
-Panel: <CR> opens the selected commit or file.
-Diff: <leader>rc drafts a comment in normal or visual mode (configurable).
-      <leader>rR drafts a reply to a discussion on this line (configurable).
-      <leader>ro opens the comment URL in the browser (configurable).
-Both: ]c/[c next/previous commit; ]f/[f next/previous file;
-      ]h/[h next/previous change block in the current file (counts supported);
-      gA complete MR/PR; gd local drafts;
-      gt discussion under the cursor (diff only); gT all discussions;
-      <leader>rr refresh the review;
-      <leader>ri show the MR/PR title and description;
-      <leader>rt toggle inline discussion messages and replies;
-      <leader>rs preview and submit drafts; q close.
+No mappings are defined by default. Every keymaps entry defaults to false,
+including navigation, panel folds, document selection/closing, draft saving
+and additional pipeline picker shortcuts.
+
+Add only the mappings you want to your setup call or lazy.nvim opts.
+All enabled mappings are buffer-local. Unset entries leave existing mappings
+available. See |review-setup| for the optional Lua example.
+
+Commands provide navigation without mappings: |:ReviewPanel| controls the tree,
+|:ReviewComplete| opens the full comparison, |:ReviewNextCommit| and
+|:ReviewNextFile| navigate commits/files, and |:ReviewNextChange| jumps changes.
 
 Opening a file focuses its first change block, opens any folds covering that
 line and centers the diff view there. A refresh keeps the previous cursor
@@ -111,8 +132,10 @@ The sidebar colors follow the colorscheme. Shortcut hints remain in a muted
 footer while the tree scrolls. Customize ReviewHelp, ReviewCommit,
 ReviewDirectory, ReviewFileAdded/Modified/Deleted/Renamed and ReviewSelected.
 
-Ctrl-S in the comment editor saves a persistent local draft, exits insertion
-and closes the editor. Publication requires :ReviewSubmit.
+:w in the comment editor saves a persistent local draft, exits insertion and
+closes the editor. Enable keymaps.save_draft for an additional save shortcut.
+Enable keymaps.close_document for closing/canceling review document windows.
+Publication requires :ReviewSubmit.
 
 Deleted rows are real buffer lines. The buffer row number is not the original
 file line number: review.nvim maps selected rows to provider old/new positions.
@@ -120,11 +143,11 @@ file line number: review.nvim maps selected rows to provider old/new positions.
 ==============================================================================
 DISCUSSION NAVIGATION                                        *review-threads*
 
-gt opens discussions attached to the cursor's diff line. Any line inside a
-commented range works. Several discussions on the same line open together.
+:ReviewThread opens discussions attached to the cursor's diff line. Any line
+inside a commented range works. Several discussions on the same line open together.
 In commit views, current-review discussions are mapped to unchanged lines;
 comment ranges must remain contiguous and unchanged.
-gT or :ReviewThreads opens all discussions, including general comments.
+:ReviewThreads opens all discussions, including general comments.
 
 Messages and replies render emoji shortcodes such as :thinking: and :question:
 as Unicode emoji, inline and in the discussion window. The bundled gemoji
@@ -132,11 +155,12 @@ catalogue needs no network access. Unknown or escaped shortcodes, Markdown code
 spans and fenced code blocks stay literal. Draft editors and submission
 previews preserve the original text.
 
-In the discussion window, j/k moves through the text, Enter jumps to the
-discussion's file and comment line, and q closes the window.
-<leader>ro or :ReviewOpenComment opens the comment or reply under the cursor
+In the discussion window, j/k moves through the text, :ReviewJump jumps to the
+discussion's file and comment line, and :q closes the window.
+:ReviewOpenComment opens the comment or reply under the cursor
 in the browser. Discussion headings and file locations open the root comment.
-Enter works from headings, locations, messages and replies.
+:ReviewJump works from headings, locations, messages and replies.
+Enable keymaps.select_comment for a jump shortcut.
 The jump focuses the appropriate old/new side, opens folds and centers the
 cursor. When needed, it opens the complete MR/PR comparison.
 
@@ -147,7 +171,7 @@ open with an explanatory message. General comments have no line to jump to.
 
 COMMENT URLS                                            *review-comment-urls*
 
-:ReviewOpenComment or <leader>ro opens a comment with vim.ui.open.
+:ReviewOpenComment opens a comment with vim.ui.open.
 In the diff, any line inside its range works. Select a discussion if several
 cover the line; its root comment opens. In a discussion window, the comment or
 reply under the cursor opens. General, resolved and outdated comments can also
@@ -156,33 +180,33 @@ be opened when their URL is available.
 GitLab links use the note ID. GitHub and Codeberg use the comment URLs returned
 by their APIs. Missing URLs and browser launch errors display a message.
 Local drafts have no published URL.
-Set keymaps.open_comment to a custom shortcut or false to disable the mapping
-in both the diff and discussion windows; the command remains available.
+Set keymaps.open_comment to enable a shortcut in both the diff and discussion
+windows. It defaults to false; the command is always available.
 
 INLINE DISCUSSIONS                                    *review-inline-comments*
 
-:ReviewToggleComments or <leader>rt shows/hides discussion blocks below their
+:ReviewToggleComments shows/hides discussion blocks below their
 commented lines. Range comments appear below the last line. Authors, messages
 and replies are displayed; multiple discussions on one line appear together.
 Only discussions mapped to the current diff are shown. General comments and
-unavailable lines remain accessible through gT or :ReviewThreads.
+unavailable lines remain accessible through :ReviewThreads.
 
 Blocks use virtual lines, preserving the diff content and comment positions.
-Long lines wrap to the window width. Markdown is shown as text; gt opens the
-full discussion in a Markdown window. Local drafts retain compact markers.
+Long lines wrap to the window width. Markdown is shown as text; :ReviewThread
+opens the full discussion in a Markdown window. Local drafts retain compact markers.
 
 inline_comments defaults to false. Set it to true to show blocks initially.
 The toggle is scoped to the open review and survives navigation and refresh.
-Set keymaps.toggle_comments to a custom shortcut or false to disable it.
+Set keymaps.toggle_comments to enable a shortcut; it defaults to false.
 Customize ReviewCommentBorder, ReviewCommentAuthor and ReviewCommentBody.
 
 REPLIES                                                      *review-replies*
 
-:ReviewReply or <leader>rR opens a Markdown reply editor for the discussion
+:ReviewReply opens a Markdown reply editor for the discussion
 attached to the cursor line. Any line in a commented range works. When several
 discussions cover the line, a selector shows their authors and messages.
 
-Replies are persistent local drafts. Ctrl-S or :w saves locally; q cancels.
+Replies are persistent local drafts. :w saves locally; :q! cancels.
 :ReviewDrafts edits/deletes replies, and the diff labels them as "local reply".
 :ReviewSubmit previews the original comment and reply before publication.
 It checks the diff refs and verifies that the original comment still exists.
@@ -191,7 +215,7 @@ Failures retain drafts; uncertain outcomes block automatic retries.
 GitLab adds a note to the existing MR discussion. GitHub replies to the
 top-level PR review comment. Codeberg reply drafts are not supported.
 Replies do not approve a review or change discussion resolution.
-Set keymaps.reply to a custom shortcut or false to disable the mapping.
+Set keymaps.reply to enable a shortcut; it defaults to false.
 
 ==============================================================================
 CONFIGURATION                                                  *review-setup*
@@ -200,20 +224,43 @@ CONFIGURATION                                                  *review-setup*
     require("review").setup({
       panel_width = 44,
       inline_comments = false,
-      keymaps = {
-        comment = "<leader>rc",
-        submit = "<leader>rs",
-        refresh = "<leader>rr",
-        info = "<leader>ri",
-        toggle_comments = "<leader>rt",
-        reply = "<leader>rR",
-        open_comment = "<leader>ro",
-      }, -- false disables a mapping
+      keymaps = {}, -- all mappings disabled
       clone_protocol = "ssh",
       repo = nil,
       cache_dir = vim.fn.stdpath("cache") .. "/review",
       state_dir = vim.fn.stdpath("state") .. "/review",
     })
+<
+
+Optional mappings: add this table to the setup call above. Every value is a
+user choice; remove entries or set them to false to leave the keys available.
+The README includes the same example.
+
+>lua
+    keymaps = {
+      -- Panel and diff, normal mode.
+      next_commit = "]c", prev_commit = "[c",
+      next_file = "]f", prev_file = "[f",
+      next_hunk = "]h", prev_hunk = "[h",
+      complete = "<leader>ra", drafts = "<leader>rd",
+      threads = "<leader>rT", submit = "<leader>rs",
+      refresh = "<leader>rr", info = "<leader>ri",
+      toggle_comments = "<leader>rt", toggle_viewed = "<leader>rv",
+      close = "q",
+      -- Diff only; comment also works in visual mode.
+      comment = "<leader>rc", reply = "<leader>rR", thread = "<leader>rl",
+      open_comment = "<leader>ro", -- also in discussion windows
+      -- Panel only.
+      search_files = "<leader>rf",
+      panel_open = "<CR>", panel_left = "h", panel_right = "l",
+      panel_toggle = "za", panel_expand = "zo", panel_collapse = "zc",
+      panel_collapse_all = "zM", panel_expand_all = "zR",
+      -- Review document/comment windows.
+      close_document = "q", select_comment = "<CR>",
+      save_draft = "<C-s>", -- comment editor, normal/insert mode
+      -- Extra pipeline picker shortcuts, insert/normal mode.
+      pipeline_open = "<C-o>", pipeline_back = "<C-b>",
+    }
 <
 
 An existing matching repository is used without switching branches.
@@ -225,7 +272,8 @@ COMMENT POSITIONS                                            *review-comments*
 
 Commit-view comments are mapped to the current MR/PR diff, not posted as standalone
 commit comments. A line rewritten by a later commit must be selected again in
-the complete MR/PR view (gA). Ranges must cover one contiguous side of the diff.
+the complete MR/PR view (:ReviewComplete). Ranges must cover one contiguous
+side of the diff.
 Providers require the selected lines to be inside their diff context.
 
 GitHub uses line/side and start_line/start_side for ranges. Removed lines

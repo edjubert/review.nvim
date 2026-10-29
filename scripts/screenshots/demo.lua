@@ -153,6 +153,19 @@ local function reset()
   review.setup(vim.tbl_deep_extend("force", preferences, {
     repo = repo, cache_dir = root .. "/cache", state_dir = root .. "/state",
     panel_width = 44, inline_comments = false,
+    -- Explicit demo preferences, matching the optional README example.
+    keymaps = {
+      next_commit = "]c", prev_commit = "[c", next_file = "]f", prev_file = "[f",
+      next_hunk = "]h", prev_hunk = "[h", complete = "<leader>ra", drafts = "<leader>rd",
+      threads = "<leader>rT", submit = "<leader>rs", refresh = "<leader>rr", info = "<leader>ri",
+      toggle_comments = "<leader>rt", toggle_viewed = "<leader>rv", close = "q",
+      comment = "<leader>rc", reply = "<leader>rR", thread = "<leader>rl", open_comment = "<leader>ro",
+      search_files = "<leader>rf", panel_open = "<CR>", panel_left = "h", panel_right = "l",
+      panel_toggle = "za", panel_expand = "zo", panel_collapse = "zc",
+      panel_collapse_all = "zM", panel_expand_all = "zR",
+      close_document = "q", select_comment = "<CR>", save_draft = "<C-s>",
+      pipeline_open = "<C-o>", pipeline_back = "<C-b>",
+    },
   }))
   review.open(fixture.url)
   session = assert(review.session, "Could not create the screenshot review.")

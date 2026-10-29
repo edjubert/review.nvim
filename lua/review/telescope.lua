@@ -194,12 +194,13 @@ end
 
 function M.pipelines(session, pipelines)
   if not M.available() then return end
+  local keymaps = session.config.keymaps or {}
   local cache = {}
   local head = session.data.mr.diff_refs.head_sha
   local function session_open()
     return not session.closed and require("review.ui").valid(session)
   end
-  -- A pipeline's preview and Enter action share the same pending request.
+  -- A pipeline's preview and selection action share the same pending request.
   local function details(pipeline, done)
     local key = tostring(pipeline.project_id or session.target.project) .. "/" .. pipeline.id
     local entry = cache[key]
@@ -236,7 +237,9 @@ function M.pipelines(session, pipelines)
     end
     telescope.pickers.new(options, {
       prompt_title = "Pipeline #" .. pipeline.id .. " jobs",
-      results_title = "Enter / Ctrl-o: browser · Ctrl-b: pipelines",
+      results_title = "Select: browser"
+        .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or "")
+        .. (keymaps.pipeline_back and " · " .. keymaps.pipeline_back .. ": pipelines" or ""),
       finder = telescope.finders.new_table({
         results = pipeline.jobs,
         entry_maker = function(job)
@@ -261,11 +264,13 @@ function M.pipelines(session, pipelines)
         end
         telescope.actions.select_default:replace(open)
         for _, mode in ipairs({ "i", "n" }) do
-          map(mode, "<C-o>", open)
-          map(mode, "<C-b>", function()
-            telescope.actions.close(prompt_bufnr)
-            vim.schedule(show_pipelines)
-          end)
+          if keymaps.pipeline_open then map(mode, keymaps.pipeline_open, open) end
+          if keymaps.pipeline_back then
+            map(mode, keymaps.pipeline_back, function()
+              telescope.actions.close(prompt_bufnr)
+              vim.schedule(show_pipelines)
+            end)
+          end
         end
         return true
       end,
@@ -279,7 +284,8 @@ function M.pipelines(session, pipelines)
     end
     telescope.pickers.new(options, {
       prompt_title = session.target.project .. " " .. session.provider.prefix .. session.target.iid .. " pipelines",
-      results_title = "Enter: jobs · Ctrl-o: browser",
+      results_title = "Select: jobs"
+        .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or ""),
       finder = telescope.finders.new_table({
         results = pipelines,
         entry_maker = function(pipeline)
@@ -331,10 +337,12 @@ function M.pipelines(session, pipelines)
           end)
         end)
         for _, mode in ipairs({ "i", "n" }) do
-          map(mode, "<C-o>", function()
-            local entry = telescope.action_state.get_selected_entry()
-            if entry and session_open() then open_browser(entry.value) end
-          end)
+          if keymaps.pipeline_open then
+            map(mode, keymaps.pipeline_open, function()
+              local entry = telescope.action_state.get_selected_entry()
+              if entry and session_open() then open_browser(entry.value) end
+            end)
+          end
         end
         return true
       end,

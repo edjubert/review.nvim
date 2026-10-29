@@ -3,11 +3,17 @@ local defaults = {
   panel_width = 44,
   inline_comments = false,
   keymaps = {
-    comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr",
-    info = "<leader>ri", toggle_comments = "<leader>rt", reply = "<leader>rR",
-    open_comment = "<leader>ro",
-    search_files = "/",
-    toggle_viewed = "<leader>rv",
+    comment = false, submit = false, refresh = false, info = false,
+    toggle_comments = false, reply = false, open_comment = false,
+    search_files = false, toggle_viewed = false,
+    next_commit = false, prev_commit = false, next_file = false, prev_file = false,
+    next_hunk = false, prev_hunk = false, complete = false, drafts = false,
+    thread = false, threads = false, close = false,
+    panel_open = false, panel_left = false, panel_right = false,
+    panel_toggle = false, panel_expand = false, panel_collapse = false,
+    panel_collapse_all = false, panel_expand_all = false,
+    close_document = false, select_comment = false, save_draft = false,
+    pipeline_open = false, pipeline_back = false,
   },
   clone_protocol = "ssh",
   repo = nil,
@@ -20,9 +26,10 @@ function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
   assert(type(M.config.inline_comments) == "boolean", "inline_comments must be a boolean")
-  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments", "reply", "open_comment",
-      "search_files", "toggle_viewed" }) do
-    assert(type(M.config.keymaps[name]) == "string" or M.config.keymaps[name] == false,
+  assert(type(M.config.keymaps) == "table", "keymaps must be a table")
+  for name, key in pairs(M.config.keymaps) do
+    assert(defaults.keymaps[name] ~= nil, "Unknown keymaps." .. name)
+    assert((type(key) == "string" and key ~= "") or key == false,
       "keymaps." .. name .. " must be a mapping string or false")
   end
 end
@@ -162,8 +169,37 @@ function M.toggle_comments()
 end
 
 function M._commands()
+  local function session_command(name, callback, opts)
+    vim.api.nvim_create_user_command(name, function(args)
+      if not M.session or M.session.closed then
+        vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+        return
+      end
+      callback(M.session, args)
+    end, opts)
+  end
   vim.api.nvim_create_user_command("Review", function(args) M.open(args.args) end,
     { nargs = "?", desc = "Open a GitLab MR, GitHub PR or Codeberg PR URL" })
+  for _, entry in ipairs({
+    { "ReviewNextCommit", "move_commit", 1, "Next review commit" },
+    { "ReviewPrevCommit", "move_commit", -1, "Previous review commit" },
+    { "ReviewNextFile", "move_file", 1, "Next review file" },
+    { "ReviewPrevFile", "move_file", -1, "Previous review file" },
+    { "ReviewNextChange", "move_hunk", 1, "Next review change" },
+    { "ReviewPrevChange", "move_hunk", -1, "Previous review change" },
+  }) do
+    local opts = { desc = entry[4] }
+    if entry[2] == "move_hunk" then opts.count = 1 end
+    session_command(entry[1], function(session, args) session[entry[2]](session, entry[3], args.count) end, opts)
+  end
+  session_command("ReviewComplete", function(session) session:select_commit(0) end,
+    { desc = "Show the complete MR/PR comparison" })
+  local panel_actions = { "open", "left", "right", "toggle", "expand", "collapse", "collapse_all", "expand_all" }
+  session_command("ReviewPanel", function(session, args)
+    if not vim.tbl_contains(panel_actions, args.args) then error("Unknown ReviewPanel action: " .. args.args, 0) end
+    require("review.ui").panel_action(session, args.args)
+  end, { nargs = 1, desc = "Open or fold the selected review tree entry",
+    complete = function() return panel_actions end })
   vim.api.nvim_create_user_command("ReviewInfo", M.info,
     { desc = "Show the MR/PR title and description" })
   vim.api.nvim_create_user_command("ReviewPipelines", M.pipelines,
@@ -186,6 +222,10 @@ function M._commands()
     { desc = "Inspect, edit or delete local drafts" })
   vim.api.nvim_create_user_command("ReviewThreads", function() if M.session then M.session:show_threads() end end,
     { desc = "Read all review discussions and jump to comment lines" })
+  session_command("ReviewThread", function(session) session:show_thread_at_cursor() end,
+    { desc = "Read discussions attached to the current diff line" })
+  session_command("ReviewJump", function(session) session:jump_thread_at_cursor() end,
+    { desc = "Jump from the selected discussion to its comment line" })
   vim.api.nvim_create_user_command("ReviewToggleComments", M.toggle_comments,
     { desc = "Show or hide discussions inline in the review diff" })
   vim.api.nvim_create_user_command("ReviewRefresh", M.refresh,

@@ -25,6 +25,8 @@ nvim -c 'luafile scripts/screenshots/demo.lua' -c DemoInline
 Requirements: Neovim 0.11+, Git, `glab` in PATH, and already installed
 `telescope.nvim` with `plenary.nvim`. No GitLab authentication is needed.
 The launcher does not install dependencies.
+It explicitly enables the optional mappings shown in the plugin README for
+this demo session; review.nvim itself has no mappings enabled by default.
 
 ## Scenes
 
