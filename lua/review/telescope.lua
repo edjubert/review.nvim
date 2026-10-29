@@ -4,6 +4,7 @@ local viewed = require("review.viewed")
 local M = {}
 local telescope
 local pipeline_namespace = vim.api.nvim_create_namespace("review.pipeline")
+local job_groups_namespace = vim.api.nvim_create_namespace("review.job-groups")
 
 local function notify(message, level)
   vim.notify(message, level or vim.log.levels.INFO, { title = "review" })
@@ -69,6 +70,11 @@ local function metadata(value, kind)
   field(lines, "Status", status.label(value.state))
   highlights[#highlights + 1] = { line = #lines, group = pipeline_style(value.state) }
   field(lines, "Stage", value.stage)
+  local user = text(value.user_name)
+  local username = text(value.user_username)
+  if username ~= "" then user = user ~= "" and (user .. " (@" .. username .. ")") or ("@" .. username) end
+  field(lines, "User", user)
+  field(lines, "Pipeline ID", value.pipeline_id)
   field(lines, "Ref", value.ref)
   field(lines, "Commit", value.sha)
   field(lines, "Source", value.source)
@@ -77,6 +83,7 @@ local function metadata(value, kind)
   field(lines, "Updated", value.updated_at)
   field(lines, "Started", value.started_at)
   field(lines, "Finished", value.finished_at)
+  field(lines, "Log erased", value.erased_at)
   field(lines, "Duration", duration(value.duration))
   if type(value.queued_duration) == "number" then field(lines, "Queued", duration(value.queued_duration)) end
   field(lines, "Failure reason", value.failure_reason)
@@ -192,10 +199,135 @@ local function columns(value, job)
   end
 end
 
+local function grouped_jobs(jobs)
+  local groups, by_stage, ordered = {}, {}, {}
+  for _, job in ipairs(jobs) do
+    local name = text(job.stage)
+    if name == "" then name = "Other jobs" end
+    if not by_stage[name] then
+      by_stage[name] = { name = name, jobs = {} }
+      groups[#groups + 1] = by_stage[name]
+    end
+    local group = by_stage[name]
+    group.jobs[#group.jobs + 1] = job
+  end
+  for _, group in ipairs(groups) do
+    table.sort(group.jobs, function(a, b)
+      local left, right = text(a.name):lower(), text(b.name):lower()
+      if left == right then return a.id < b.id end
+      return left < right
+    end)
+    for _, job in ipairs(group.jobs) do
+      ordered[#ordered + 1] = { job = job, group = group.name, rank = #ordered + 1 }
+    end
+  end
+  return ordered
+end
+
+local function grouped_job_sorter()
+  local sorter = telescope.config.generic_sorter({})
+  local score = sorter.score
+  -- Use the user's fuzzy matcher, but retain stage/name order among matches.
+  sorter.score = function(self, prompt, entry, add, filter)
+    return score(self, prompt, entry, function(_, matched)
+      if add then return add(matched.rank, matched) end
+      return matched.rank
+    end, filter)
+  end
+  return sorter
+end
+
+local function job_group_headings(picker)
+  local buf = picker.results_bufnr
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not picker.manager then return end
+  vim.api.nvim_buf_clear_namespace(buf, job_groups_namespace, 0, -1)
+  local groups, current, index = {}, nil, 0
+  for entry in picker.manager:iter() do
+    index = index + 1
+    local row = picker:get_row(index)
+    if row >= vim.api.nvim_buf_line_count(buf) then break end
+    if not current or current.name ~= entry.group then
+      current = { name = entry.group, row = row, count = 0 }
+      groups[#groups + 1] = current
+    end
+    current.count = current.count + 1
+  end
+  for _, group in ipairs(groups) do
+    -- Virtual headings have no selectable row and cannot trigger job actions.
+    vim.api.nvim_buf_set_extmark(buf, job_groups_namespace, group.row, 0, {
+      virt_lines = { { { ("  %s (%d)"):format(group.name, group.count), "ReviewPipelineStage" } } },
+      virt_lines_above = true, virt_lines_leftcol = true,
+    })
+  end
+  if groups[1] and groups[1].row == 0 and vim.api.nvim_win_is_valid(picker.results_win) then
+    vim.api.nvim_win_call(picker.results_win, function()
+      local view = vim.fn.winsaveview()
+      if view.topline == 1 then
+        view.topfill = 1
+        vim.fn.winrestview(view)
+      end
+    end)
+  end
+end
+
+local function log_lines(trace)
+  local truncated = false
+  if #trace > 512 * 1024 then
+    truncated, trace = true, trace:sub(-512 * 1024)
+    local newline = trace:find("\n", 1, true)
+    if newline then trace = trace:sub(newline + 1)
+    else
+      while #trace > 0 and trace:byte(1) >= 128 and trace:byte(1) < 192 do trace = trace:sub(2) end
+    end
+  end
+  trace = trace:gsub("\27%].-\7", ""):gsub("\27%].-\27\\", "")
+    :gsub("\27[P^_].-\27\\", ""):gsub("\27%[[0-?]*[ -/]*[@-~]", ""):gsub("\27[@-_]", "")
+    :gsub("section_start:%d+:[^\r\n]*\r?", ""):gsub("section_end:%d+:[^\r\n]*\r?", "")
+    :gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("[%z\1-\8\11\12\14-\31\127]", "")
+  local lines = vim.split(trace, "\n", { plain = true })
+  if #lines > 5000 then
+    truncated = true
+    local tail = {}
+    for index = #lines - 4999, #lines do tail[#tail + 1] = lines[index] end
+    lines = tail
+  end
+  return lines, truncated
+end
+
+local function job_preview(value)
+  local job = value.job
+  local lines, highlights = metadata(job, "Job")
+  if value.details_error then
+    lines[#lines + 1] = "Details unavailable: " .. text(value.details_error)
+    highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
+  end
+  lines[#lines + 1], lines[#lines + 2] = "", "Log"
+  highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineHeading" }
+  if value.log_error then
+    lines[#lines + 1] = "Log unavailable: " .. text(value.log_error)
+    highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
+  elseif value.unavailable then
+    lines[#lines + 1] = value.unavailable
+  elseif value.trace == nil then
+    lines[#lines + 1] = "Loading log…"
+  elseif value.trace == "" then
+    lines[#lines + 1] = type(job.erased_at) == "string" and job.erased_at ~= ""
+      and "This job's log has been erased." or "No log is available for this job."
+  else
+    local output, truncated = log_lines(value.trace)
+    if truncated then
+      lines[#lines + 1] = "Showing the log tail (preview limited to 5000 lines / 512 KiB)."
+      highlights[#highlights + 1] = { line = #lines, group = "ReviewStatusWarn" }
+    end
+    vim.list_extend(lines, output)
+  end
+  return lines, highlights
+end
+
 function M.pipelines(session, pipelines)
   if not M.available() then return end
   local keymaps = session.config.keymaps or {}
-  local cache = {}
+  local cache, job_cache = {}, {}
   local head = session.data.mr.diff_refs.head_sha
   local function session_open()
     return not session.closed and require("review.ui").valid(session)
@@ -223,6 +355,64 @@ function M.pipelines(session, pipelines)
       if entry.pending then finish(nil, err) else notify(err, vim.log.levels.ERROR) end
     end)
   end
+  local function job_details(job, done, wanted)
+    local key = tostring(job.project_id or session.target.project) .. "/" .. job.id
+    local cached = job_cache[key]
+    if cached then
+      if cached.pending then
+        cached.callbacks[#cached.callbacks + 1] = { done = done, wanted = wanted }
+        return
+      end
+      local state = cached.value and cached.value.job.state
+      local finished = state == "success" or state == "failed" or state == "canceled" or state == "skipped"
+      local erased = cached.value and type(cached.value.job.erased_at) == "string"
+        and cached.value.job.erased_at ~= ""
+      if cached.value and not cached.value.deferred
+          and ((finished and not cached.value.log_error and not cached.value.details_error
+              and (cached.value.trace ~= "" or erased))
+            or vim.uv.now() - cached.updated < 3000) then
+        done(cached.value)
+        return
+      end
+    end
+    cached = { pending = true, callbacks = { { done = done, wanted = wanted } } }
+    job_cache[key] = cached
+    local function finish(value)
+      cached.pending, cached.value, cached.updated = false, value, vim.uv.now()
+      local callbacks = cached.callbacks
+      cached.callbacks = nil
+      for _, callback in ipairs(callbacks) do callback.done(value) end
+    end
+    async.run(function()
+      local value = { job = job }
+      if job.trigger then
+        value.unavailable = "Downstream triggers do not have job logs. Open their downstream pipeline to inspect its jobs."
+        finish(value)
+        return
+      end
+      if session.provider.job_details then
+        local ok, result = pcall(session.provider.job_details, session.target, job)
+        if ok then value.job = result else value.details_error = tostring(result) end
+      end
+      local active = false
+      for _, callback in ipairs(cached.callbacks) do if callback.wanted() then active = true; break end end
+      if not session_open() or not active then
+        value.deferred = true
+      elseif type(value.job.erased_at) == "string" and value.job.erased_at ~= "" then
+        value.trace = ""
+      elseif session.provider.job_trace then
+        local ok, trace = pcall(session.provider.job_trace, session.target, value.job)
+        if ok and type(trace) == "string" then value.trace = trace
+        else value.log_error = ok and "The provider returned an invalid job log." or tostring(trace) end
+      else
+        value.unavailable = "Job logs are not available for this provider."
+      end
+      finish(value)
+    end, function(err)
+      if cached.pending then finish({ job = job, log_error = tostring(err) })
+      elseif session_open() then notify(err, vim.log.levels.ERROR) end
+    end)
+  end
   local options = {
     sorting_strategy = "ascending",
     layout_strategy = "horizontal",
@@ -235,29 +425,52 @@ function M.pipelines(session, pipelines)
       notify(pipeline.jobs_error or pipeline.bridges_error or "No jobs in this pipeline.", vim.log.levels.WARN)
       return
     end
-    telescope.pickers.new(options, {
+    local prompt, selected, generation, picker = nil, nil, 0, nil
+    local function picker_open()
+      return picker and not picker.closed and prompt and vim.api.nvim_buf_is_valid(prompt) and session_open()
+    end
+    picker = telescope.pickers.new(options, {
       prompt_title = "Pipeline #" .. pipeline.id .. " jobs",
       results_title = "Select: browser"
         .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or "")
         .. (keymaps.pipeline_back and " · " .. keymaps.pipeline_back .. ": pipelines" or ""),
       finder = telescope.finders.new_table({
-        results = pipeline.jobs,
-        entry_maker = function(job)
+        results = grouped_jobs(pipeline.jobs),
+        entry_maker = function(item)
+          local job = item.job
           return {
-            value = job, display = columns(job, true),
+            value = job, group = item.group, rank = item.rank, display = columns(job, true),
             ordinal = table.concat({ text(job.id), text(job.stage), text(job.name), text(job.state),
               text(job.failure_reason) }, " "),
           }
         end,
       }),
-      sorter = telescope.config.generic_sorter({}),
+      sorter = grouped_job_sorter(),
+      on_complete = { job_group_headings },
       previewer = telescope.previewers.new_buffer_previewer({
-        title = "Job details",
+        title = "Job log",
         define_preview = function(self, entry)
-          preview_buffer(self.state.bufnr, metadata(entry.value, "Job"))
+          local buf, job = self.state.bufnr, entry.value
+          selected, generation = job, generation + 1
+          local request = generation
+          local function wanted()
+            return picker_open() and selected == job and generation == request
+              and picker:get_selection() == entry and self.state and self.state.bufnr == buf
+          end
+          local lines, highlights = job_preview({ job = job })
+          preview_buffer(buf, lines, highlights, "review-job-log")
+          if self.state.winid and vim.api.nvim_win_is_valid(self.state.winid) then
+            vim.api.nvim_win_set_cursor(self.state.winid, { 1, 0 })
+          end
+          job_details(job, function(value)
+            if not wanted() then return end
+            local lines, highlights = job_preview(value)
+            preview_buffer(buf, lines, highlights, "review-job-log")
+          end, wanted)
         end,
       }),
       attach_mappings = function(prompt_bufnr, map)
+        prompt = prompt_bufnr
         local function open()
           local entry = telescope.action_state.get_selected_entry()
           if entry and session_open() then open_browser(entry.value) end
@@ -274,7 +487,8 @@ function M.pipelines(session, pipelines)
         end
         return true
       end,
-    }):find()
+    })
+    picker:find()
   end
   show_pipelines = function()
     if not session_open() then return end

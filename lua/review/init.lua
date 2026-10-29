@@ -229,7 +229,7 @@ function M._commands()
   vim.api.nvim_create_user_command("ReviewHelp", M.help,
     { desc = "Search review commands and configured mappings in Telescope" })
   vim.api.nvim_create_user_command("ReviewPipelines", M.pipelines,
-    { desc = "Browse GitLab MR pipelines and jobs in Telescope" })
+    { desc = "Browse GitLab MR pipelines, grouped jobs and job logs in Telescope" })
   vim.api.nvim_create_user_command("ReviewFiles", function(args) M.files(args.args) end,
     { nargs = "*", desc = "Filter changed files in the review panel" })
   vim.api.nvim_create_user_command("ReviewFilesClear", M.clear_files,

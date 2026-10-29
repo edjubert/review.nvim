@@ -503,22 +503,43 @@ to change these colors and stage headings.
 | Pipelines or jobs | Optional `keymaps.pipeline_open` | Open the selected pipeline or job in GitLab |
 | Jobs | Optional `keymaps.pipeline_back` | Return to the pipeline list |
 
-The jobs picker previews timings, runner, failure policy, failure reason and
-downstream pipeline metadata. Use Telescope's usual search and preview scrolling
-keys. Job logs remain available through the browser link.
+Selecting a pipeline opens a searchable jobs picker with non-selectable stage
+headings. Stages follow their first occurrence in the pipeline's job list; jobs
+are sorted by name within each stage. Searching filters jobs without rearranging
+their groups. Each job row uses its status color.
+
+Highlight a job to load its log asynchronously in the preview. Above the log,
+the header shows its name, ID, status, stage, triggering user, ref, commit,
+creation/start/finish dates, execution and queue durations, runner, failure
+policy and failure reason when available. Use Telescope's usual search and
+preview scrolling keys.
 
 ![Failed GitLab integration checks job showing its stage, duration, queue time, script_failure reason, demo-runner and allowed failure policy](assets/screenshots/pipeline-job.png)
 
 Selecting a pipeline opens its jobs picker. The preview here shows the failed
 `integration checks` job and its timings, runner and failure policy.
+This earlier capture shows the metadata view; the current preview includes the
+job log beneath it.
 
 The command requires `telescope.nvim` and `plenary.nvim`; the rest of the plugin
 works without them. With lazy.nvim, you can add
 `dependencies = { "nvim-telescope/telescope.nvim" }` to the review plugin spec,
 and configure Telescope's own `plenary.nvim` dependency as usual.
 Each command invocation fetches a fresh list; details are cached only while
-browsing that list. An unavailable jobs or triggers endpoint is reported in the
-preview. The command only reads GitLab APIs and does not run, retry or cancel jobs.
+browsing that list. Completed job previews are reused; reselecting a job that
+has not finished reloads its details and log after a three-second cache interval.
+Logs do not poll in the background. Late responses never replace another job's
+preview or update a closed picker.
+
+Logs are displayed as plain text, with terminal control sequences and GitLab
+section markers removed. Very long logs show their tail, limited to 5,000 lines
+and 512 KiB, with a truncation notice. The browser link opens the full log.
+Empty, erased or inaccessible logs show a message while retaining job metadata.
+Downstream triggers show their downstream pipeline metadata and link, since
+they have no job trace.
+
+An unavailable jobs or triggers endpoint is reported in the preview. The command
+only reads GitLab APIs and does not run, retry or cancel jobs.
 Pipeline details for GitHub and Codeberg are not implemented.
 
 ## Comments

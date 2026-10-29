@@ -295,7 +295,7 @@ function M.help(session)
     add(":ReviewPanel " .. item[1], item[2], item[3], "Panel")
   end
   if session.provider.pipelines then
-    add(":ReviewPipelines", false, "Browse GitLab pipelines and jobs in Telescope")
+    add(":ReviewPipelines", false, "Browse GitLab pipelines, grouped jobs and job logs in Telescope")
     add("Open pipeline/job URL", "pipeline_open", "Open the selected pipeline or job in the browser", "Pipeline / jobs picker")
     add("Return to pipelines", "pipeline_back", "Return from the jobs picker to its pipelines", "Jobs picker")
   end

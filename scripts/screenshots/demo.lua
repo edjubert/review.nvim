@@ -50,7 +50,7 @@ vim.g.review_screenshot_root = root
 
 local provider = require("review.providers.gitlab")
 for _, name in ipairs({
-  "load", "current", "status", "discussions", "pipelines", "pipeline_details",
+  "load", "current", "status", "discussions", "pipelines", "pipeline_details", "job_details", "job_trace",
   "post", "reply", "approve", "request_changes", "resolve", "validate_reply", "validate_request_changes",
 }) do
   provider[name] = fixture[name]
@@ -198,7 +198,7 @@ end
 local function preview_contains(text)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local buf = vim.api.nvim_win_get_buf(win)
-    if vim.bo[buf].filetype == "review-pipeline" then
+    if vim.bo[buf].filetype == "review-pipeline" or vim.bo[buf].filetype == "review-job-log" then
       for _, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
         if line:find(text, 1, true) then return true end
       end
@@ -256,7 +256,8 @@ local scenes = {
     current_picker("Pipeline #703 jobs"):reset_prompt("integration checks")
     wait(function()
       local selected = require("telescope.actions.state").get_selected_entry()
-      return selected and selected.value.name == "integration checks" and preview_contains("script_failure")
+      return selected and selected.value.name == "integration checks"
+        and preview_contains("ERROR: Job failed: exit code 1")
     end, "failed job preview")
   end,
 }

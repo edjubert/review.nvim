@@ -45,7 +45,7 @@ Close Markdown windows with `q`.
 | `:DemoThreads` | `discussion.png` | Individually resolved conversation, participants and reaction users |
 | `:DemoFiles` | `file-search.png` | Sidebar input filtering inbox, 2/5 counter, folders, Git statuses and viewed markers |
 | `:DemoPipelines` | `pipelines.png` | Three pipelines and grouped jobs with five status colors |
-| `:DemoJob` | `pipeline-job.png` | Failed integration checks job, runner, timings and failure reason |
+| `:DemoJob` | `pipeline-job.png` | Grouped job picker and simulated failed integration checks log, user, runner, timings and failure reason |
 | `:DemoRequestChanges` | `request-changes.png` | Standalone change request dialog with Cancel selected |
 | `:DemoInline` | `inline-comments.png` | Comment and reply below the filter range, with reactions |
 | `:DemoResolveAll` | `resolve-all.png` | Warning for two conversations, including an outdated one, initially Cancel |
@@ -88,7 +88,9 @@ choice when the dialog opens. The images retain the earlier file-filter position
 at the top of the panel. The current UI places it below the review information
 and immediately above the commits. The captured shortcut list at the panel's
 bottom has also moved to the `:ReviewHelp` Telescope picker, accessible through
-the demo's optional `<leader>r?` mapping. These captures remain unchanged.
+the demo's optional `<leader>r?` mapping. The jobs picker now has stage headings
+and previews a simulated job log below its metadata; `pipeline-job.png` keeps
+the earlier metadata-only preview. These captures remain unchanged.
 
 ### Recapture one scene
 
@@ -130,6 +132,7 @@ It is not a real GitLab page.
 The launcher intercepts GitLab methods before opening it. Process execution is
 limited to fixture Git commands in the temporary repository; Git fetch/clone/push
 and other programs are rejected. Browser actions are recorded locally.
+Job metadata and traces are also supplied by the fixture, without network access.
 All local drafts and viewed markers use the demo's temporary state directory.
 
 Inspect that directory and the simulated-action log:

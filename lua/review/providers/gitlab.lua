@@ -12,7 +12,7 @@ end
 
 M.build_position = position.build
 
-function M.request(target, endpoint, body, method)
+function M.request(target, endpoint, body, method, raw)
   local argv = { "glab", "api", "--hostname", target.host, "--method", method or (body and "POST" or "GET"), endpoint }
   local opts = {}
   if body then
@@ -20,6 +20,7 @@ function M.request(target, endpoint, body, method)
     opts.stdin = vim.json.encode(body)
   end
   local output = async.checked(argv, opts)
+  if raw then return output end
   local ok, data = pcall(vim.json.decode, output)
   if not ok then error("GitLab returned an invalid JSON response.", 0) end
   return data
@@ -227,6 +228,7 @@ local function pipeline_metadata(pipeline)
   if type(pipeline) ~= "table" or not positive_id(pipeline.id) then
     error("GitLab returned an invalid pipeline ID.", 0)
   end
+  local user = type(pipeline.user) == "table" and pipeline.user or {}
   return {
     id = pipeline.id,
     project_id = positive_id(pipeline.project_id) and pipeline.project_id or nil,
@@ -235,7 +237,31 @@ local function pipeline_metadata(pipeline)
     created_at = pipeline.created_at, updated_at = pipeline.updated_at,
     started_at = pipeline.started_at, finished_at = pipeline.finished_at,
     duration = pipeline.duration, queued_duration = pipeline.queued_duration,
-    web_url = pipeline.web_url,
+    web_url = pipeline.web_url, user_name = user.name, user_username = user.username,
+  }
+end
+
+local function job_metadata(job, project_id, trigger)
+  if type(job) ~= "table" or not positive_id(job.id) then
+    error("GitLab returned an invalid pipeline job.", 0)
+  end
+  local pipeline = type(job.pipeline) == "table" and job.pipeline or {}
+  local commit = type(job.commit) == "table" and job.commit or {}
+  local runner = type(job.runner) == "table" and job.runner or {}
+  local user = type(job.user) == "table" and job.user or {}
+  local downstream = type(job.downstream_pipeline) == "table" and job.downstream_pipeline or nil
+  return {
+    id = job.id, name = job.name, stage = job.stage, state = job.status or "unknown",
+    project_id = positive_id(pipeline.project_id) and pipeline.project_id or project_id,
+    pipeline_id = positive_id(pipeline.id) and pipeline.id or nil,
+    ref = job.ref or pipeline.ref, sha = commit.id or pipeline.sha,
+    duration = job.duration, queued_duration = job.queued_duration,
+    created_at = job.created_at, started_at = job.started_at, finished_at = job.finished_at,
+    erased_at = job.erased_at, allow_failure = job.allow_failure == true,
+    failure_reason = job.failure_reason, runner = runner.description,
+    user_name = user.name, user_username = user.username,
+    web_url = job.web_url, trigger = trigger == true,
+    downstream = downstream and pipeline_metadata(downstream) or nil,
   }
 end
 
@@ -260,19 +286,9 @@ function M.pipeline_details(target, pipeline)
   result.jobs = {}
   local function append_jobs(jobs, trigger)
     for _, job in ipairs(jobs) do
-      if type(job) ~= "table" or not positive_id(job.id) then
-        error("GitLab returned an invalid pipeline job.", 0)
-      end
-      local runner = type(job.runner) == "table" and job.runner.description or nil
-      local downstream = type(job.downstream_pipeline) == "table" and job.downstream_pipeline or nil
-      result.jobs[#result.jobs + 1] = {
-        id = job.id, name = job.name, stage = job.stage, state = job.status or "unknown",
-        duration = job.duration, queued_duration = job.queued_duration,
-        created_at = job.created_at, started_at = job.started_at, finished_at = job.finished_at,
-        allow_failure = job.allow_failure == true, failure_reason = job.failure_reason,
-        runner = runner, web_url = job.web_url, trigger = trigger,
-        downstream = downstream and pipeline_metadata(downstream) or nil,
-      }
+      local value = job_metadata(job, result.project_id or pipeline.project_id, trigger)
+      value.pipeline_id = value.pipeline_id or result.id
+      result.jobs[#result.jobs + 1] = value
     end
   end
   local ok, jobs = pcall(M.pages, target, endpoint .. "/jobs")
@@ -281,6 +297,28 @@ function M.pipeline_details(target, pipeline)
   if bridges_ok then append_jobs(bridges, true) else result.bridges_error = tostring(bridges) end
   table.sort(result.jobs, function(a, b) return a.id < b.id end)
   return result
+end
+
+local function job_path(target, job)
+  if type(job) ~= "table" or not positive_id(job.id) then
+    error("This job has no valid GitLab ID.", 0)
+  end
+  if job.trigger then error("Downstream pipeline triggers do not have job logs.", 0) end
+  local project = positive_id(job.project_id) and ("projects/" .. job.project_id) or M.project_path(target)
+  return project .. "/jobs/" .. job.id
+end
+
+function M.job_details(target, job)
+  local result = job_metadata(M.request(target, job_path(target, job)), job.project_id, false)
+  if result.id ~= job.id or (job.project_id and result.project_id ~= job.project_id)
+      or (job.pipeline_id and result.pipeline_id ~= job.pipeline_id) then
+    error("GitLab returned a different job.", 0)
+  end
+  return result
+end
+
+function M.job_trace(target, job)
+  return M.request(target, job_path(target, job) .. "/trace", nil, "GET", true)
 end
 
 function M.validate_request_changes(target)

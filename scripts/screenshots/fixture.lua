@@ -194,6 +194,7 @@ assert(#inbox.filter(messages, { unread_only = true }) == 1)
       ref = "demo-review", source = "merge_request_event",
       created_at = ("2026-10-29T09:0%d:00Z"):format(6 - index_),
       duration = index_ == 1 and 192 or 140,
+      user_name = "Demo Author", user_username = "demo-author",
       web_url = project_url .. "/-/pipelines/" .. entry[1],
     }
   end
@@ -215,6 +216,8 @@ assert(#inbox.filter(messages, { unread_only = true }) == 1)
     end
     jobs[index_] = {
       id = 8100 + index_, stage = entry[1], name = entry[2], state = entry[3], duration = entry[4],
+      project_id = 420, pipeline_id = 703, ref = "demo-review", sha = head,
+      user_name = "Demo Author", user_username = "demo-author",
       queued_duration = entry[4] and 2 or nil, runner = "demo-runner",
       allow_failure = entry[3] == "manual" or index_ == 6,
       failure_reason = index_ == 6 and "script_failure" or nil,
@@ -273,6 +276,7 @@ assert(#inbox.filter(messages, { unread_only = true }) == 1)
       if entry.id == pipeline.id then
         local result = vim.deepcopy(entry)
         result.jobs = vim.deepcopy(jobs)
+        for _, job in ipairs(result.jobs) do job.pipeline_id, job.sha = entry.id, entry.sha end
         if entry.id ~= 703 then
           for number, job in ipairs(result.jobs) do
             job.id = (entry.id == 702 and 8020 or 8010) + number
@@ -295,6 +299,44 @@ assert(#inbox.filter(messages, { unread_only = true }) == 1)
       end
     end
     error("Unknown screenshot pipeline.")
+  end
+  function fixture.job_details(target, job)
+    target_ok(target)
+    assert(job.project_id == 420, "Unexpected job project.")
+    local pipeline = fixture.pipeline_details(target, { id = job.pipeline_id, project_id = 420 })
+    for _, entry in ipairs(pipeline.jobs) do
+      if entry.id == job.id then return entry end
+    end
+    error("Unknown screenshot job.")
+  end
+  function fixture.job_trace(target, job)
+    local value = fixture.job_details(target, job)
+    if not value.started_at then return "" end
+    local lines = {
+      "Running with gitlab-runner 18.0.0 (demo)",
+      "  on demo-runner, system ID: demo-runner-01",
+      "section_start:1793264702:prepare_executor\r\27[0KPreparing the executor",
+      'Using Docker executor with image demo/inbox:latest ...',
+      "section_end:1793264703:prepare_executor\r\27[0K",
+      "Getting source from Git repository",
+      "Checking out " .. value.sha:sub(1, 8) .. " as detached HEAD (ref is demo-review)...",
+      "Executing the job script",
+      "$ ./scripts/check-inbox.sh",
+      "Checking inbox filters and message ordering...",
+    }
+    if value.state == "failed" then
+      vim.list_extend(lines, {
+        "FAIL: integration checks",
+        "Expected an empty query to match all unread messages.",
+        "Cleaning up project directory and file based variables",
+        "\27[31;1mERROR: Job failed: exit code 1\27[0m",
+      })
+    elseif value.state == "running" then
+      lines[#lines + 1] = "Running inbox filter checks (in progress)..."
+    else
+      vim.list_extend(lines, { "All inbox checks passed.", "\27[32;1mJob succeeded\27[0m" })
+    end
+    return table.concat(lines, "\n") .. "\n"
   end
   function fixture.approve(target, value)
     target_ok(target); refs_ok(value)
