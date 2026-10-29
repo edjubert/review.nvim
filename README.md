@@ -16,6 +16,7 @@ in Neovim.
 - Switch between individual commits and the complete MR/PR.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
+- Search the current comparison's changed files in Telescope from the panel.
 - See emoji reactions and counts on comments and replies.
 - Select deleted lines as well as added lines.
 - Save, edit and delete persistent local comment drafts.
@@ -23,6 +24,7 @@ in Neovim.
 - Preview and explicitly publish drafts as inline discussions on GitLab, GitHub
   or Codeberg.
 - See the latest pipeline/check status and reviewer decisions in the panel.
+- Browse GitLab MR pipelines and their jobs in Telescope.
 - Approve the open MR/PR or request changes with explicit commands.
 - Resolve a GitLab conversation, or confirm resolving all open MR conversations.
 - Open the discussion under the cursor or browse all review discussions.
@@ -49,6 +51,8 @@ Neovim configuration.
   GitLab and GitHub need an authenticated CLI. Codeberg needs `CODEBERG_TOKEN`
   for private repositories or publication.
 - Git access to the repository (SSH by default).
+- Optional: [`telescope.nvim`](https://github.com/nvim-telescope/telescope.nvim)
+  and its `plenary.nvim` dependency for `:ReviewPipelines` and `:ReviewFiles`.
 
 ### Authentication
 
@@ -108,7 +112,7 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
+    "Review", "ReviewInfo", "ReviewPipelines", "ReviewFiles", "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
     "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit",
     "ReviewApprove", "ReviewRequestChanges", "ReviewResolve", "ReviewResolveAll", "ReviewClose",
   },
@@ -155,6 +159,8 @@ merge base.
 | --- | --- |
 | `:Review [url]` | Open a GitLab MR, GitHub PR or Codeberg PR |
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
+| `:ReviewPipelines` | Browse the GitLab MR's pipelines and jobs in Telescope |
+| `:ReviewFiles` | Search the current comparison's changed files in Telescope |
 | `:ReviewComment` | Compose a local draft on the current line |
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
 | `:ReviewReply` | Draft a reply to a discussion on the current diff line |
@@ -176,6 +182,7 @@ merge base.
 | Mapping | Action |
 | --- | --- |
 | `Enter` in the panel | Open a commit or file |
+| `/` in the panel | Search changed files in Telescope |
 | `]c` / `[c` | Next / previous commit |
 | `]f` / `[f` | Next / previous file |
 | `]h` / `[h` | Next / previous change block in the current file |
@@ -202,6 +209,22 @@ Highlight groups such as `ReviewHelp`, `ReviewDirectory`, `ReviewFileAdded`,
 form one block; navigation stays within the current file. Use `]f` for the next file.
 Opening a file automatically places the cursor on its first change block,
 opens any folds covering that line, and centers the diff view there.
+
+### File search
+
+Press `/` in the panel or run `:ReviewFiles` to search the changed files in the
+currently displayed commit or complete MR/PR comparison. Telescope searches both
+the new and old paths of renamed files. `Enter` opens the selected file's review
+diff and updates the panel selection. Added, modified, deleted, renamed and copied
+files are marked `A`, `M`, `D`, `R` and `C`.
+
+The search uses the review's Git comparison; it does not search the working
+directory or open files from disk. If the comparison changes while the picker
+is open, reopen the search before selecting a file.
+
+Configure `keymaps.search_files` to change the panel shortcut, or set it to `false`
+to keep only `:ReviewFiles`. The diff buffer retains Neovim's normal `/` search.
+File search requires `telescope.nvim` and `plenary.nvim`.
 
 ### Review title and description
 
@@ -239,6 +262,34 @@ all branch protection requirements are satisfied.
 Statuses are read when opening or refreshing a review and after submitting a
 decision or comments. Run `:ReviewRefresh` to fetch changes made on the server.
 Unavailable status endpoints display `unavailable` while the diff stays readable.
+
+### Pipeline details in Telescope
+
+Run `:ReviewPipelines` in an open GitLab MR. The picker lists all pipelines attached
+to that MR, newest first, with status, source, commit, ref and creation date.
+Its preview loads the selected pipeline's jobs and downstream triggers
+asynchronously, including stage, status, duration and failure reason. It also
+indicates whether the pipeline matches the MR head revision loaded in your review.
+
+| Picker | Key | Action |
+| --- | --- | --- |
+| Pipelines | `Enter` | Browse the selected pipeline's jobs |
+| Pipelines or jobs | `Ctrl-o` | Open the selected pipeline or job in GitLab |
+| Jobs | `Enter` | Open the selected job in GitLab |
+| Jobs | `Ctrl-b` | Return to the pipeline list |
+
+The jobs picker previews timings, runner, failure policy, failure reason and
+downstream pipeline metadata. Use Telescope's usual search and preview scrolling
+keys. Job logs remain available through the browser link.
+
+The command requires `telescope.nvim` and `plenary.nvim`; the rest of the plugin
+works without them. With lazy.nvim, you can add
+`dependencies = { "nvim-telescope/telescope.nvim" }` to the review plugin spec,
+and configure Telescope's own `plenary.nvim` dependency as usual.
+Each command invocation fetches a fresh list; details are cached only while
+browsing that list. An unavailable jobs or triggers endpoint is reported in the
+preview. The command only reads GitLab APIs and does not run, retry or cancel jobs.
+Pipeline details for GitHub and Codeberg are not implemented.
 
 ## Comments
 
@@ -489,6 +540,7 @@ require("review").setup({
     toggle_comments = "<leader>rt", -- normal, panel/diff; false disables this mapping
     reply = "<leader>rR",   -- normal, diff; false disables this mapping
     open_comment = "<leader>ro", -- normal, diff/discussion; false disables this mapping
+    search_files = "/",   -- normal, panel only; false disables this mapping
   },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected
@@ -504,6 +556,7 @@ require("review").setup({
 - Text files; binary files display a notice.
 - Commit diffs compare against the first parent. Root commits are not supported.
 - Pipeline/check status, approval and change requests on all providers.
+- GitLab pipeline/job details and file search on all providers via optional Telescope.
 - Discussion reading and new comments on all providers; replies on GitLab and
   GitHub. Conversation resolution on GitLab. Codeberg reply drafts and GitHub/
   Codeberg conversation resolution are not implemented.

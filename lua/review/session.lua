@@ -442,6 +442,40 @@ function Session:show_drafts()
   end)
 end
 
+function Session:search_files()
+  if self.closed or not ui.valid(self) then return end
+  if self.refreshing then notify("Wait for the review refresh to finish.", vim.log.levels.WARN); return end
+  if not self.ready or not self.base or not self.head then
+    notify("The review file list is not loaded yet.", vim.log.levels.WARN)
+    return
+  end
+  if #self.files == 0 then notify("No changed files in this comparison."); return end
+  require("review.telescope").files(self)
+end
+
+function Session:show_pipelines()
+  if self.closed or not ui.valid(self) then return end
+  if not self.ready or not self.data then
+    notify("The review metadata is not loaded yet.", vim.log.levels.WARN)
+    return
+  end
+  if not self.provider.pipelines or not self.provider.pipeline_details then
+    notify("Pipeline details are currently supported for GitLab merge requests.", vim.log.levels.WARN)
+    return
+  end
+  if self.loading_pipelines then notify("Pipelines are already loading."); return end
+  local picker = require("review.telescope")
+  if not picker.available("ReviewPipelines") then return end
+  self.loading_pipelines = true
+  self:task(function()
+    local pipelines = self.provider.pipelines(self.target)
+    self.loading_pipelines = false
+    if self.closed or not ui.valid(self) then return end
+    if #pipelines == 0 then notify("No pipelines attached to this MR."); return end
+    picker.pipelines(self, pipelines)
+  end, function() self.loading_pipelines = false end)
+end
+
 function Session:show_info()
   if not ui.valid(self) then return end
   if not self.data then

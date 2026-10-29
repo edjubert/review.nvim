@@ -219,6 +219,70 @@ function M.status(target, mr)
   }
 end
 
+local function positive_id(value)
+  return type(value) == "number" and value > 0 and value % 1 == 0
+end
+
+local function pipeline_metadata(pipeline)
+  if type(pipeline) ~= "table" or not positive_id(pipeline.id) then
+    error("GitLab returned an invalid pipeline ID.", 0)
+  end
+  return {
+    id = pipeline.id,
+    project_id = positive_id(pipeline.project_id) and pipeline.project_id or nil,
+    name = pipeline.name, state = pipeline.status or "unknown",
+    ref = pipeline.ref, sha = pipeline.sha, source = pipeline.source,
+    created_at = pipeline.created_at, updated_at = pipeline.updated_at,
+    started_at = pipeline.started_at, finished_at = pipeline.finished_at,
+    duration = pipeline.duration, queued_duration = pipeline.queued_duration,
+    web_url = pipeline.web_url,
+  }
+end
+
+function M.pipelines(target)
+  local pipelines = {}
+  for _, pipeline in ipairs(M.pages(target, M.mr_path(target) .. "/pipelines")) do
+    pipelines[#pipelines + 1] = pipeline_metadata(pipeline)
+  end
+  table.sort(pipelines, function(a, b) return a.id > b.id end)
+  return pipelines
+end
+
+function M.pipeline_details(target, pipeline)
+  if not positive_id(pipeline.id) then error("This pipeline has no valid GitLab ID.", 0) end
+  -- Fork pipelines belong to their own project, which can differ from the MR.
+  local project = positive_id(pipeline.project_id) and ("projects/" .. pipeline.project_id) or M.project_path(target)
+  local endpoint = project .. "/pipelines/" .. pipeline.id
+  local result = pipeline_metadata(M.request(target, endpoint))
+  if result.id ~= pipeline.id or (pipeline.project_id and result.project_id ~= pipeline.project_id) then
+    error("GitLab returned a different pipeline.", 0)
+  end
+  result.jobs = {}
+  local function append_jobs(jobs, trigger)
+    for _, job in ipairs(jobs) do
+      if type(job) ~= "table" or not positive_id(job.id) then
+        error("GitLab returned an invalid pipeline job.", 0)
+      end
+      local runner = type(job.runner) == "table" and job.runner.description or nil
+      local downstream = type(job.downstream_pipeline) == "table" and job.downstream_pipeline or nil
+      result.jobs[#result.jobs + 1] = {
+        id = job.id, name = job.name, stage = job.stage, state = job.status or "unknown",
+        duration = job.duration, queued_duration = job.queued_duration,
+        created_at = job.created_at, started_at = job.started_at, finished_at = job.finished_at,
+        allow_failure = job.allow_failure == true, failure_reason = job.failure_reason,
+        runner = runner, web_url = job.web_url, trigger = trigger,
+        downstream = downstream and pipeline_metadata(downstream) or nil,
+      }
+    end
+  end
+  local ok, jobs = pcall(M.pages, target, endpoint .. "/jobs")
+  if ok then append_jobs(jobs, false) else result.jobs_error = tostring(jobs) end
+  local bridges_ok, bridges = pcall(M.pages, target, endpoint .. "/bridges")
+  if bridges_ok then append_jobs(bridges, true) else result.bridges_error = tostring(bridges) end
+  table.sort(result.jobs, function(a, b) return a.id < b.id end)
+  return result
+end
+
 function M.validate_request_changes(target)
   -- Introspection is read-only and detects older GitLab installations before
   -- any comments are published by the combined submission flow.

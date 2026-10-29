@@ -103,6 +103,12 @@ function M.open_comment_key(session)
   return key
 end
 
+function M.search_files_key(session)
+  local key = (session.config.keymaps or {}).search_files
+  if key == nil then return "/" end
+  return key
+end
+
 function M.bind_open_comment(session, buf)
   local key = M.open_comment_key(session)
   if key then
@@ -184,6 +190,11 @@ function M.create(session)
   })
   M.bind(session, session.panel_buf)
   M.bind(session, session.viewer_buf)
+  local search_files_key = M.search_files_key(session)
+  if search_files_key then
+    vim.keymap.set("n", search_files_key, function() session:search_files() end,
+      { buffer = session.panel_buf, silent = true, desc = "Search changed files in Telescope" })
+  end
   vim.keymap.set("n", "<CR>", function()
     local entry = session.panel_entries[vim.api.nvim_win_get_cursor(session.panel_win)[1]]
     if entry then
@@ -221,6 +232,7 @@ local function footer_hints(session)
     " Enter open · gA complete " .. session.provider.kind,
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
     " ]c/[c commits · ]f/[f files",
+    " " .. (M.search_files_key(session) or ":ReviewFiles") .. " search files (Telescope)",
     " ]h/[h next/previous change",
     " gt thread here · gT all threads",
     " " .. (M.reply_key(session) or ":ReviewReply") .. " reply to thread",
@@ -232,6 +244,7 @@ local function footer_hints(session)
     " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
     " :ReviewApprove / :ReviewRequestChanges",
   }
+  if session.provider.pipelines then hints[#hints + 1] = " :ReviewPipelines details (Telescope)" end
   if session.provider.resolve then hints[#hints + 1] = " :ReviewResolve / :ReviewResolveAll" end
   return hints
 end
