@@ -569,7 +569,6 @@ function Session:toggle_comments()
   if not ui.valid(self) then return end
   self.inline_comments = not self.inline_comments
   ui.comments(self)
-  ui.footer(self)
 end
 
 function Session:show_thread_at_cursor()

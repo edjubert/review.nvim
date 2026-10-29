@@ -15,7 +15,7 @@ function M.check()
   vim.health.info("Authenticate with gh auth login --hostname <your-github-host>.")
   vim.health.info("Codeberg uses curl; set CODEBERG_TOKEN in the environment for private repositories or publication.")
   vim.health.info("SSH cloning uses your existing Git credentials; no tokens are read from local files.")
-  if pcall(require, "telescope") then vim.health.ok("Telescope found (:ReviewPipelines / :ReviewFiles)")
-  else vim.health.info("telescope.nvim and plenary.nvim are optional; install them for :ReviewPipelines / :ReviewFiles.") end
+  if pcall(require, "telescope") then vim.health.ok("Telescope found (:ReviewHelp / :ReviewPipelines / :ReviewFilesPicker)")
+  else vim.health.info("telescope.nvim and plenary.nvim are optional; install them for :ReviewHelp / :ReviewPipelines / :ReviewFilesPicker.") end
 end
 return M

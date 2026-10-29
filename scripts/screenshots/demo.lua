@@ -158,6 +158,7 @@ local function reset()
       next_commit = "]c", prev_commit = "[c", next_file = "]f", prev_file = "[f",
       next_hunk = "]h", prev_hunk = "[h", complete = "<leader>ra", drafts = "<leader>rd",
       threads = "<leader>rT", submit = "<leader>rs", refresh = "<leader>rr", info = "<leader>ri",
+      help = "<leader>r?",
       toggle_comments = "<leader>rt", toggle_viewed = "<leader>rv", close = "q",
       comment = "<leader>rc", reply = "<leader>rR", thread = "<leader>rl", open_comment = "<leader>ro",
       search_files = "<leader>rf", files_picker = "<leader>rF", filter_exit = "<Esc>",

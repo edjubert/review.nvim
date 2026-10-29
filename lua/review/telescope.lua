@@ -150,12 +150,12 @@ local function pipeline_preview(pipeline, head)
   return lines, highlights
 end
 
-local function preview_buffer(buf, lines, highlights)
+local function preview_buffer(buf, lines, highlights, filetype)
   if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   -- Explicit decorations keep job colors independent of Markdown rendering.
-  vim.bo[buf].filetype = "review-pipeline"
+  vim.bo[buf].filetype = filetype or "review-pipeline"
   vim.api.nvim_buf_clear_namespace(buf, pipeline_namespace, 0, -1)
   for _, highlight in ipairs(highlights or {}) do
     vim.api.nvim_buf_set_extmark(buf, pipeline_namespace, highlight.line - 1, 0, {
@@ -349,6 +349,62 @@ function M.pipelines(session, pipelines)
     }):find()
   end
   show_pipelines()
+end
+
+function M.help(entries)
+  if not M.available("ReviewHelp") then return end
+  local display = telescope.display.create({
+    separator = "  ",
+    items = { { width = 32 }, { width = 20 }, { remaining = true } },
+  })
+  telescope.pickers.new({
+    sorting_strategy = "ascending",
+    layout_strategy = "horizontal",
+    layout_config = { width = 0.95, height = 0.80, preview_width = 0.40 },
+  }, {
+    prompt_title = "Review help",
+    results_title = "Command · configured key · action",
+    finder = telescope.finders.new_table({
+      results = entries,
+      entry_maker = function(item)
+        return {
+          value = item,
+          display = function()
+            return display({
+              { item.command, "ReviewPanelTitle" },
+              { item.key or "—", "ReviewHelp" },
+              item.description,
+            })
+          end,
+          ordinal = table.concat({ item.command, item.key or "", item.description, item.scope }, " "),
+        }
+      end,
+    }),
+    sorter = telescope.config.generic_sorter({}),
+    previewer = telescope.previewers.new_buffer_previewer({
+      title = "Command help",
+      define_preview = function(self, entry)
+        local item = entry.value
+        preview_buffer(self.state.bufnr, {
+          item.command, "",
+          "Mapping: " .. (item.key or "not configured"),
+          "Context: " .. item.scope, "",
+          item.description, "",
+          "This picker only displays help.",
+          "Selecting an entry closes it without running a command.",
+        }, { { line = 1, group = "ReviewPanelTitle" } }, "review-help")
+        if self.state.winid and vim.api.nvim_win_is_valid(self.state.winid) then
+          vim.wo[self.state.winid].wrap = true
+        end
+      end,
+    }),
+    attach_mappings = function(prompt_bufnr)
+      telescope.actions.select_default:replace(function()
+        telescope.actions.close(prompt_bufnr)
+      end)
+      return true
+    end,
+  }):find()
 end
 
 function M.files(session)

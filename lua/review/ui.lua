@@ -147,6 +147,7 @@ function M.bind(session, buf)
     submit = { function() session:submit() end, "Preview and submit review drafts" },
     refresh = { function() session:refresh() end, "Refresh the review" },
     info = { function() session:show_info() end, "Show the MR/PR title and description" },
+    help = { function() M.help(session) end, "Search review commands and mappings" },
     toggle_comments = { function() session:toggle_comments() end, "Show or hide inline discussions" },
     toggle_viewed = { function() session:mark_viewed() end, "Toggle this file's local viewed state" },
     files_picker = { function() session:pick_files() end, "Search review files in Telescope" },
@@ -176,13 +177,19 @@ function M.create(session)
   vim.wo[session.panel_win].foldenable = false
   vim.wo[session.panel_win].winfixwidth = true
   vim.wo[session.panel_win].cursorline = true
+  vim.wo[session.panel_win].scrolloff = math.max(3, vim.o.scrolloff)
   session.ui_group = vim.api.nvim_create_augroup("ReviewUI" .. serial, { clear = true })
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
     group = session.ui_group,
     callback = function()
-      M.footer(session)
       M.filter(session)
       if session.inline_comments then M.comments(session) end
+    end,
+  })
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    group = session.ui_group,
+    callback = function()
+      if vim.v.event[tostring(session.panel_win)] then M.filter(session) end
     end,
   })
   vim.api.nvim_create_autocmd("WinClosed", {
@@ -230,78 +237,73 @@ function M.create(session)
   M.panel(session)
 end
 
-local function footer_hints(session)
-  local function hint(name, command)
-    return M.key(session, name) or command
+function M.help(session)
+  if not M.valid(session) then return end
+  local entries = {}
+  local function add(command, mapping, description, scope)
+    entries[#entries + 1] = {
+      command = command, key = M.key(session, mapping), description = description,
+      scope = scope or "Panel / diff",
+    }
   end
-  local hints = {
-    " " .. hint("panel_open", ":ReviewPanel open") .. " open/fold",
-    " " .. hint("complete", ":ReviewComplete") .. " complete " .. session.provider.kind,
-    " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
-    " " .. (M.search_files_key(session) or ":ReviewFiles") .. " filter files",
-    " :ReviewFilesClear clear filter",
-    " " .. (M.toggle_viewed_key(session) or ":ReviewToggleViewed") .. " toggle viewed",
-    " " .. hint("thread", ":ReviewThread") .. " thread here",
-    " " .. hint("threads", ":ReviewThreads") .. " all threads",
-    " " .. (M.reply_key(session) or ":ReviewReply") .. " reply to thread",
-    " " .. (M.open_comment_key(session) or ":ReviewOpenComment") .. " open comment URL",
-    " " .. (M.toggle_comments_key(session) or ":ReviewToggleComments")
-      .. " inline comments (" .. (session.inline_comments and "on" or "off") .. ")",
-    " " .. hint("drafts", ":ReviewDrafts") .. " drafts",
-    " " .. (M.info_key(session) or ":ReviewInfo") .. " info",
-    " " .. (M.refresh_key(session) or ":ReviewRefresh") .. " refresh " .. session.provider.kind,
-    " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit",
-    " " .. hint("close", ":ReviewClose") .. " close",
-    " :ReviewApprove / :ReviewRequestChanges",
-  }
-  for _, pair in ipairs({
-    { "next_commit", "prev_commit", "commits" },
-    { "next_file", "prev_file", "files" },
-    { "next_hunk", "prev_hunk", "changes" },
-    { "panel_left", "panel_right", "tree" },
-    { "panel_collapse_all", "panel_expand_all", "folds" },
+  for _, item in ipairs({
+    { ":ReviewHelp", "help", "Search review commands and configured mappings" },
+    { ":ReviewInfo", "info", "Show the MR/PR title and description" },
+    { ":ReviewComplete", "complete", "Show the complete MR/PR comparison" },
+    { ":ReviewNextCommit", "next_commit", "Select the next commit" },
+    { ":ReviewPrevCommit", "prev_commit", "Select the previous commit" },
+    { ":ReviewNextFile", "next_file", "Open the next matching changed file" },
+    { ":ReviewPrevFile", "prev_file", "Open the previous matching changed file" },
+    { ":ReviewNextChange", "next_hunk", "Jump forward through change blocks; accepts a count" },
+    { ":ReviewPrevChange", "prev_hunk", "Jump backward through change blocks; accepts a count" },
+    { ":ReviewFiles", "search_files", "Edit the sidebar file filter, or apply a query", "Panel" },
+    { ":ReviewFilesClear", false, "Clear the filter and restore directory folds", "Panel" },
+    { "Return to file tree", "filter_exit", "Keep the query and return to the tree; native Enter and Ctrl-C also work", "File filter" },
+    { ":ReviewFilesPicker", "files_picker", "Search all changed files in Telescope" },
+    { ":ReviewViewed", false, "Mark the selected file viewed locally" },
+    { ":ReviewUnviewed", false, "Remove the selected file's local viewed marker" },
+    { ":ReviewToggleViewed", "toggle_viewed", "Toggle the selected file's local viewed marker" },
+    { ":[range]ReviewComment", "comment", "Create a local draft on a line or selected range", "Diff, normal / visual" },
+    { ":ReviewReply", "reply", "Create a local reply draft on a commented line", "Diff" },
+    { ":ReviewThread", "thread", "Read discussions on the current line or range", "Diff" },
+    { ":ReviewThreads", "threads", "Read all discussions" },
+    { ":ReviewJump", "select_comment", "Jump to the selected discussion's diff line", "Discussion window" },
+    { ":ReviewOpenComment", "open_comment", "Open the selected comment or reply in the browser", "Diff / discussion window" },
+    { ":ReviewDrafts", "drafts", "Inspect, edit or delete local drafts" },
+    { ":ReviewRefresh", "refresh", "Reload the review while preserving local drafts" },
+    { ":ReviewSubmit", "submit", "Preview drafts and confirm publication or publication with a change request" },
+    { ":ReviewApprove", false, "Approve the current MR/PR immediately without publishing drafts" },
+    { ":ReviewRequestChanges", false, "Confirm requesting changes without publishing local drafts" },
+    { ":ReviewClose", "close", "Close the review tab" },
+    { ":w", "save_draft", "Save a draft locally and close its editor", "Comment editor" },
+    { ":q!", "close_document", "Cancel draft editing without publishing", "Comment editor" },
   }) do
-    local forward, backward = M.key(session, pair[1]), M.key(session, pair[2])
-    if forward or backward then
-      hints[#hints + 1] = " " .. table.concat(vim.tbl_filter(function(key) return key ~= false end,
-        { forward, backward }), "/") .. " " .. pair[3]
-    end
+    add(unpack(item))
   end
-  if session.provider.pipelines then hints[#hints + 1] = " :ReviewPipelines details (Telescope)" end
-  if session.provider.resolve then hints[#hints + 1] = " :ReviewResolve / :ReviewResolveAll" end
-  return hints
-end
-
--- A non-focusable footer remains at the bottom even when the tree scrolls.
--- Blank tail rows and scrolloff keep selectable entries above the overlay.
-function M.footer(session)
-  if not M.valid(session) or not vim.api.nvim_win_is_valid(session.panel_win) then return end
-  local hints = footer_hints(session)
-  local panel_height = vim.api.nvim_win_get_height(session.panel_win)
-  local height = math.min(#hints, math.max(1, panel_height - 6))
-  local width = vim.api.nvim_win_get_width(session.panel_win)
-  local row = panel_height - height
-  if not session.help_buf or not vim.api.nvim_buf_is_valid(session.help_buf) then
-    session.help_buf = scratch("review://" .. session.serial .. "/help", "review")
+  add(":ReviewToggleComments", "toggle_comments", "Show or hide inline discussions ("
+    .. (session.inline_comments and "on" or "off") .. ")")
+  for _, item in ipairs({
+    { "open", "panel_open", "Open a commit/file or toggle a directory" },
+    { "left", "panel_left", "Collapse a directory or move to its parent" },
+    { "right", "panel_right", "Expand a directory or move to its first child" },
+    { "toggle", "panel_toggle", "Toggle the selected directory" },
+    { "expand", "panel_expand", "Expand the selected directory" },
+    { "collapse", "panel_collapse", "Collapse the selected directory" },
+    { "collapse_all", "panel_collapse_all", "Collapse all directories" },
+    { "expand_all", "panel_expand_all", "Expand all directories" },
+  }) do
+    add(":ReviewPanel " .. item[1], item[2], item[3], "Panel")
   end
-  set_lines(session.help_buf, hints)
-  if not session.help_win or not vim.api.nvim_win_is_valid(session.help_win) then
-    session.help_win = vim.api.nvim_open_win(session.help_buf, false, {
-      relative = "win", win = session.panel_win, row = row, col = 0,
-      width = width, height = height, focusable = false, style = "minimal", zindex = 40,
-    })
-    vim.wo[session.help_win].winhighlight = "Normal:ReviewHelp,NormalFloat:ReviewHelp,EndOfBuffer:ReviewHelp"
-    vim.wo[session.help_win].wrap = false
-  else
-    local current = vim.api.nvim_win_get_config(session.help_win)
-    if current.row ~= row or current.width ~= width or current.height ~= height then
-      vim.api.nvim_win_set_config(session.help_win, {
-        relative = "win", win = session.panel_win, row = row, col = 0,
-        width = width, height = height,
-      })
-    end
+  if session.provider.pipelines then
+    add(":ReviewPipelines", false, "Browse GitLab pipelines and jobs in Telescope")
+    add("Open pipeline/job URL", "pipeline_open", "Open the selected pipeline or job in the browser", "Pipeline / jobs picker")
+    add("Return to pipelines", "pipeline_back", "Return from the jobs picker to its pipelines", "Jobs picker")
   end
-  vim.wo[session.panel_win].scrolloff = height
+  if session.provider.resolve then
+    add(":ReviewResolve", false, "Resolve the selected conversation immediately", "Diff / discussion window")
+    add(":ReviewResolveAll", false, "Warn and confirm before resolving all open conversations")
+  end
+  require("review.telescope").help(entries)
 end
 
 function M.close(session)
@@ -311,9 +313,6 @@ function M.close(session)
   end
   if session.filter_win and vim.api.nvim_win_is_valid(session.filter_win) then
     vim.api.nvim_win_close(session.filter_win, true)
-  end
-  if session.help_win and vim.api.nvim_win_is_valid(session.help_win) then
-    vim.api.nvim_win_close(session.help_win, true)
   end
 end
 
@@ -464,8 +463,13 @@ function M.filter(session)
   end
   local root = file_tree(session)
   local width = math.max(1, vim.api.nvim_win_get_width(session.panel_win) - 2)
+  local topline = vim.fn.getwininfo(session.panel_win)[1].topline - 1
+  local last_row = math.max(0, vim.api.nvim_win_get_height(session.panel_win) - 3)
+  -- Follow the reserved rows above the tree, then stay accessible at the top
+  -- once the review metadata has scrolled out of view.
+  local row = math.min(last_row, math.max(0, (session.filter_row or 0) - topline))
   local config = {
-    relative = "win", win = session.panel_win, row = 0, col = 0,
+    relative = "win", win = session.panel_win, row = row, col = 0,
     width = width, height = 1, focusable = true, style = "minimal", border = "rounded",
     title = " Files ", title_pos = "left", footer = (" %d/%d "):format(root.count, root.total),
     footer_pos = "right",
@@ -553,12 +557,11 @@ end
 function M.panel(session)
   if not M.valid(session) or not vim.api.nvim_buf_is_valid(session.panel_buf) then return end
   local lines = {
-    "", "", "", "",
     session.provider.prefix .. session.target.iid .. " " .. (session.data and session.data.mr.title or "Loading…"),
     "",
   }
-  if session.refreshing and session.data then lines[5] = lines[5] .. " · refreshing…" end
-  local decorations = { { line = 5, start = 0, finish = #lines[5], group = "ReviewPanelTitle" } }
+  if session.refreshing and session.data then lines[1] = lines[1] .. " · refreshing…" end
+  local decorations = { { line = 1, start = 0, finish = #lines[1], group = "ReviewPanelTitle" } }
   session.panel_entries = {}
   local function highlight(line, start, finish, group)
     decorations[#decorations + 1] = { line = line, start = start, finish = finish, group = group }
@@ -599,6 +602,9 @@ function M.panel(session)
     highlight(#lines, 0, #lines[#lines], session.viewed_error and "ReviewStatusWarn" or "ReviewHelp")
     lines[#lines + 1] = ""
   end
+  session.filter_row = #lines
+  -- Three rows for the bordered input and one spacer before the first commit.
+  for _ = 1, 4 do lines[#lines + 1] = "" end
   local function files()
     local status_groups = {
       A = "ReviewFileAdded", M = "ReviewFileModified", D = "ReviewFileDeleted",
@@ -645,7 +651,6 @@ function M.panel(session)
   lines[#lines + 1] = ""
   lines[#lines + 1] = ("%d local draft(s)"):format(#session.drafts)
   highlight(#lines, 0, #lines[#lines], "ReviewDraftCount")
-  for _ = 1, #footer_hints(session) do lines[#lines + 1] = "" end
   set_lines(session.panel_buf, lines)
   vim.api.nvim_buf_clear_namespace(session.panel_buf, panel_namespace, 0, -1)
   for _, decoration in ipairs(decorations) do
@@ -654,7 +659,6 @@ function M.panel(session)
     vim.api.nvim_buf_set_extmark(session.panel_buf, panel_namespace,
       decoration.line - 1, decoration.start or 0, opts)
   end
-  M.footer(session)
   M.filter(session)
 end
 

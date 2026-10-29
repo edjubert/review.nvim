@@ -39,6 +39,13 @@ COMMANDS
     window. :q closes it. Empty descriptions display "No description provided."
     Use :ReviewRefresh to retrieve updated metadata.
 
+:ReviewHelp                                                     *:ReviewHelp*
+    Search commands, configured shortcuts, actions and contexts in Telescope.
+    The preview shows the mapping and where each action applies. Disabled
+    shortcuts are shown as unconfigured. Selecting an entry closes the picker
+    without running a command. Requires telescope.nvim and plenary.nvim.
+    Enable keymaps.help for a shortcut; the optional example uses <leader>r?.
+
 :[range]ReviewComment                                        *:ReviewComment*
     Draft a comment on the current diff line or a visual line selection.
     :w in the comment editor saves locally. :q! cancels.
@@ -87,7 +94,7 @@ COMMANDS
     Actions: open, left, right, toggle, expand, collapse, collapse_all, expand_all.
 
 :ReviewFiles [query]                                          *:ReviewFiles*
-    Without a query, focus the search field at the top of the sidebar.
+    Without a query, focus the search field just above the sidebar's commits.
     Type to filter changed files as you edit. Matching folders stay visible
     and start expanded. The counter shows matching files / total files.
     With a query, apply it directly without focusing the field.
@@ -147,8 +154,8 @@ Opening a file focuses its first change block, opens any folds covering that
 line and centers the diff view there. A refresh keeps the previous cursor
 when the displayed Git revisions are unchanged.
 
-The sidebar colors follow the colorscheme. Shortcut hints remain in a muted
-footer while the tree scrolls. Customize ReviewHelp, ReviewCommit,
+The sidebar colors follow the colorscheme. :ReviewHelp shows shortcut hints
+in a searchable Telescope picker. Customize ReviewHelp, ReviewCommit,
 ReviewDirectory, ReviewFileAdded/Modified/Deleted/Renamed and ReviewSelected.
 
 :w in the comment editor saves a persistent local draft, exits insertion and
@@ -263,7 +270,7 @@ The README includes the same example.
       next_hunk = "]h", prev_hunk = "[h",
       complete = "<leader>ra", drafts = "<leader>rd",
       threads = "<leader>rT", submit = "<leader>rs",
-      refresh = "<leader>rr", info = "<leader>ri",
+      refresh = "<leader>rr", info = "<leader>ri", help = "<leader>r?",
       toggle_comments = "<leader>rt", toggle_viewed = "<leader>rv",
       files_picker = "<leader>rF",
       close = "q",
@@ -290,7 +297,9 @@ Local drafts are stored in state_dir/drafts/.
 
 FILE FILTER                                                   *review-filter*
 
-The field stays above the sidebar tree while scrolling. It filters the current
+The field sits below the review title, statuses and viewed progress, just above
+the commit/file tree. While scrolling, it follows that position and stays at the
+top once the review information scrolls out of view. It filters the current
 commit or complete comparison using case-insensitive literal path fragments.
 Whitespace separates terms; every term must match the old or new file path.
 Example: transformation/ sql. Parent folders, Git statuses and viewed markers
