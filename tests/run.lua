@@ -1843,6 +1843,12 @@ test("a failed status read after approval does not report a failed approval", fu
   s:close()
 end)
 
+dofile("tests/reactions_resolution.lua")({
+  test = test, eq = eq, raises = raises, mocked = mocked,
+  provider = provider, ui = ui, refs = refs, target = target, url = url, drafts = drafts,
+  fixture = comment_url_fixture, comment_marks = comment_marks, virtual_text = virtual_text,
+})
+
 provider.status = actual_gitlab_status
 vim.fn.delete(root, "rf")
 print(("%d passed, %d failed"):format(passed, failed))

@@ -18,7 +18,7 @@ function Session.new(target, config)
     target = target, config = config, drafts = drafts.load(config, target),
     provider = providers.for_target(target),
     inline_comments = config.inline_comments == true,
-    thread_documents = {},
+    thread_documents = {}, thread_views = {},
     commit_index = 0, files = {}, closed = false, generation = 0,
   }, Session)
 end
@@ -67,7 +67,7 @@ function Session:refresh()
     notify("Open a review with :Review first.", vim.log.levels.WARN)
     return
   end
-  if self.submitting or self.deciding then
+  if self.submitting or self.deciding or self.resolving then
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end
@@ -539,11 +539,156 @@ function Session:show_threads(discussions, title)
     on_select = function(discussion, close) self:jump_thread(discussion, close) end,
   })
   self.thread_documents[buf] = comments
+  local ids
+  if discussions then
+    ids = {}
+    for _, discussion in ipairs(discussions) do
+      if discussion.id ~= nil then ids[discussion.id] = true end
+    end
+  end
+  self.thread_views[buf] = { ids = ids, entries = entries }
   ui.bind_open_comment(self, buf)
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = buf, once = true,
-    callback = function() self.thread_documents[buf] = nil end,
+    callback = function() self.thread_documents[buf], self.thread_views[buf] = nil, nil end,
   })
+end
+
+function Session:update_discussion_views()
+  if self.current and self.current.rows then self:map_threads(self.current, self.generation) end
+  ui.comments(self)
+  for buf, view in pairs(self.thread_views) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      local selected = {}
+      for _, discussion in ipairs(self.data.discussions) do
+        if not view.ids or view.ids[discussion.id] then selected[#selected + 1] = discussion end
+      end
+      local lines, entries, comments = threads.document(selected)
+      -- The document's Enter mapping closes over its original entries table.
+      for key in pairs(view.entries) do view.entries[key] = nil end
+      for key, entry in pairs(entries) do view.entries[key] = entry end
+      self.thread_documents[buf] = comments
+      ui.update_document(buf, lines)
+    end
+  end
+end
+
+function Session:resolution_available()
+  if not self.ready or not ui.valid(self) then return false end
+  if not self.provider.resolve or not self.provider.can_resolve then
+    notify("Conversation resolution is currently supported for GitLab merge requests.", vim.log.levels.WARN)
+    return false
+  end
+  if self.submitting or self.deciding or self.resolving or self.refreshing then
+    notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
+    return false
+  end
+  return true
+end
+
+function Session:resolve_conversations(selected, refs)
+  if self.closed or not ui.valid(self) then self.resolving = false; return end
+  self.resolving = true
+  local count = 0
+  self:task(function()
+    for _, discussion in ipairs(selected) do
+      local latest = self.provider.current(self.target)
+      if not position.same_refs(refs, latest.diff_refs) then
+        error("The MR changed. Refresh and read it before resolving its conversations.", 0)
+      end
+      local result, changed = self.provider.resolve(self.target, discussion)
+      if changed then count = count + 1 end
+      -- Record each confirmed result before proceeding to the next thread.
+      for index, old in ipairs(self.data.discussions) do
+        if old.id == discussion.id then self.data.discussions[index] = result; break end
+      end
+    end
+    notify(("Resolved %d conversation(s)."):format(count))
+    local ok, discussions = pcall(self.provider.discussions, self.target, self.data.mr.diff_refs, self.data.diffs)
+    if ok then self.data.discussions = discussions
+    else notify("Conversations were resolved, but their refresh failed. Run :ReviewRefresh.", vim.log.levels.WARN) end
+    self:update_discussion_views()
+    self.resolving = false
+  end, function(err)
+    self.resolving = false
+    notify(("Resolution stopped after %d confirmed conversation(s). Check %s before retrying. %s")
+      :format(count, self.provider.name, err), vim.log.levels.WARN)
+    -- Keep successful results visible even if a later conversation failed.
+    self:task(function() self:update_discussion_views() end)
+  end)
+end
+
+function Session:resolve()
+  if not self:resolution_available() then return end
+  local buf, row = vim.api.nvim_get_current_buf(), vim.api.nvim_win_get_cursor(0)[1]
+  local selected = {}
+  local view = self.thread_views[buf]
+  if view then
+    local discussion = view.entries[row]
+    if discussion then selected[1] = discussion end
+  elseif buf == self.viewer_buf and self.current and self.current.rows then
+    for _, discussion in ipairs(self.data.discussions) do
+      if threads.contains(discussion, self.current, row) then selected[#selected + 1] = discussion end
+    end
+  else
+    notify("Use :ReviewResolve on a commented diff line or in a discussion window.", vim.log.levels.WARN)
+    return
+  end
+  local candidates = {}
+  for _, discussion in ipairs(selected) do
+    if self.provider.can_resolve(discussion) then candidates[#candidates + 1] = discussion end
+  end
+  if #candidates == 0 then
+    notify("No unresolved, resolvable conversation under the cursor.")
+    return
+  end
+  local generation, refs = self.generation, vim.deepcopy(self.data.mr.diff_refs)
+  local function resolve(discussion)
+    if discussion and generation == self.generation and self:resolution_available() then
+      self:resolve_conversations({ discussion }, refs)
+    end
+  end
+  if #candidates == 1 then resolve(candidates[1]); return end
+  vim.ui.select(candidates, {
+    prompt = "Resolve which conversation?",
+    format_item = function(discussion)
+      local root = threads.root(discussion)
+      return ("@%s · %s"):format((root.author or {}).username or "unknown",
+        (root.body or ""):gsub("[\r\n]", " "))
+    end,
+  }, resolve)
+end
+
+function Session:resolve_all()
+  if not self:resolution_available() then return end
+  self.resolving = true
+  local refs = vim.deepcopy(self.data.mr.diff_refs)
+  self:task(function()
+    local latest = self.provider.current(self.target)
+    if not position.same_refs(refs, latest.diff_refs) then
+      error("The MR changed. Refresh and read it before resolving its conversations.", 0)
+    end
+    local discussions = self.provider.discussions(self.target, refs, self.data.diffs)
+    local selected = {}
+    for _, discussion in ipairs(discussions) do
+      if self.provider.can_resolve(discussion) then selected[#selected + 1] = vim.deepcopy(discussion) end
+    end
+    if self.closed or not ui.valid(self) then self.resolving = false; return end
+    if #selected == 0 then
+      self.resolving = false
+      notify("No unresolved, resolvable conversations in this MR.")
+      return
+    end
+    local choice = ("Resolve all %d conversation(s) on MR !%d"):format(#selected, self.target.iid)
+    vim.ui.select({ "Cancel", choice }, {
+      prompt = ("WARNING: mark %d conversation(s) resolved on GitLab, including outdated ones. "
+        .. "This does not verify that the feedback was addressed."):format(#selected),
+    }, function(answer)
+      if answer == choice and not self.closed and ui.valid(self) then
+        self:resolve_conversations(selected, refs)
+      else self.resolving = false end
+    end)
+  end, function() self.resolving = false end)
 end
 
 function Session:jump_thread(discussion, close)
@@ -609,7 +754,7 @@ function Session:jump_thread(discussion, close)
 end
 
 function Session:submit()
-  if not self.ready or self.submitting or self.deciding or self.refreshing or self.closed then return end
+  if not self.ready or self.submitting or self.deciding or self.resolving or self.refreshing or self.closed then return end
   if #self.drafts == 0 then notify("No local drafts to submit."); return end
   for _, draft in ipairs(self.drafts) do
     if draft.status == "uncertain" or draft.status == "sending" then
@@ -647,7 +792,7 @@ function Session:submit()
   local choices = { "Keep local", publish_choice }
   if self.provider.request_changes then choices[#choices + 1] = changes_choice end
   local function publish(request_changes, summary)
-    if self.closed or self.submitting or self.deciding or self.refreshing then return end
+    if self.closed or self.submitting or self.deciding or self.resolving or self.refreshing then return end
     self.submitting = true
     local count, requesting = 0, false
     self:task(function()
@@ -748,7 +893,7 @@ function Session:decision(action, summary)
     notify("This review decision is not supported by " .. self.provider.name .. ".", vim.log.levels.WARN)
     return
   end
-  if self.deciding or self.submitting or self.refreshing then
+  if self.deciding or self.submitting or self.resolving or self.refreshing then
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end
@@ -783,7 +928,7 @@ function Session:approve()
 end
 
 function Session:request_changes()
-  if not self.ready or self.closed or self.deciding or self.submitting or self.refreshing then return end
+  if not self.ready or self.closed or self.deciding or self.submitting or self.resolving or self.refreshing then return end
   if not self.provider.request_changes then
     notify("Request changes is not supported by " .. self.provider.name .. ".", vim.log.levels.WARN)
     return
@@ -800,7 +945,7 @@ end
 
 function Session:close()
   if self.closed then return end
-  if self.submitting or self.deciding then
+  if self.submitting or self.deciding or self.resolving then
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end

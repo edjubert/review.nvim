@@ -3,6 +3,7 @@ local url = require("review.url")
 local position = require("review.position")
 local patches = require("review.providers.codeberg_diff")
 local status = require("review.status")
+local reactions = require("review.reactions")
 local M = { name = "Codeberg", cli = "curl", kind = "PR", label = "pull request", prefix = "#" }
 local page_size
 
@@ -159,6 +160,12 @@ function M.discussions(target, refs, files)
         error("Expected a Codeberg review comment list.", 0)
       end
       for _, comment in ipairs(comments) do
+        local awards, reactions_error
+        if type(comment.id) == "number" and comment.id > 0 and comment.id % 1 == 0 then
+          local ok, result = pcall(M.pages, target,
+            M.repo_path(target) .. "/issues/comments/" .. comment.id .. "/reactions")
+          if ok then awards = reactions.aggregate(result) else reactions_error = tostring(result) end
+        end
         local old, new = line(comment.original_position), line(comment.position)
         local file = by_path[comment.path]
         local current = not review.stale and comment.commit_id == refs.head_sha
@@ -181,6 +188,7 @@ function M.discussions(target, refs, files)
             author = { username = type(comment.user) == "table" and comment.user.login or "unknown" },
             resolved = type(comment.resolver) == "table" and comment.resolver.id ~= nil,
             outdated = review.stale == true,
+            reactions = awards, reactions_error = reactions_error,
           } },
         }
       end

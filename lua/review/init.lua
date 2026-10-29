@@ -42,7 +42,7 @@ function M.open(raw_url)
     end
   end
   if M.session then
-    if M.session.submitting or M.session.deciding then
+    if M.session.submitting or M.session.deciding or M.session.resolving then
       vim.notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
       return
     end
@@ -102,6 +102,22 @@ function M.open_comment()
   M.session:open_comment()
 end
 
+function M.resolve()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:resolve()
+end
+
+function M.resolve_all()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:resolve_all()
+end
+
 function M.info()
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
@@ -143,6 +159,10 @@ function M._commands()
     { desc = "Approve the open MR/PR" })
   vim.api.nvim_create_user_command("ReviewRequestChanges", M.request_changes,
     { desc = "Request changes on the open MR/PR without submitting local drafts" })
+  vim.api.nvim_create_user_command("ReviewResolve", M.resolve,
+    { desc = "Resolve the GitLab conversation under the cursor" })
+  vim.api.nvim_create_user_command("ReviewResolveAll", M.resolve_all,
+    { desc = "Confirm and resolve all unresolved GitLab MR conversations" })
   vim.api.nvim_create_user_command("ReviewClose", function() if M.session then M.session:close() end end,
     { desc = "Close the review tab" })
 end

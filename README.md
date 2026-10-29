@@ -16,6 +16,7 @@ in Neovim.
 - Switch between individual commits and the complete MR/PR.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
+- See emoji reactions and counts on comments and replies.
 - Select deleted lines as well as added lines.
 - Save, edit and delete persistent local comment drafts.
 - Draft replies to existing GitLab and GitHub discussions from their diff lines.
@@ -23,6 +24,7 @@ in Neovim.
   or Codeberg.
 - See the latest pipeline/check status and reviewer decisions in the panel.
 - Approve the open MR/PR or request changes with explicit commands.
+- Resolve a GitLab conversation, or confirm resolving all open MR conversations.
 - Open the discussion under the cursor or browse all review discussions.
 - Toggle discussion messages and replies directly below their commented lines.
 - Jump from a discussion to its commented line.
@@ -108,7 +110,7 @@ With lazy.nvim:
   cmd = {
     "Review", "ReviewInfo", "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
     "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit",
-    "ReviewApprove", "ReviewRequestChanges", "ReviewClose",
+    "ReviewApprove", "ReviewRequestChanges", "ReviewResolve", "ReviewResolveAll", "ReviewClose",
   },
   opts = {},
 }
@@ -164,6 +166,8 @@ merge base.
 | `:ReviewSubmit` | Preview drafts and choose whether to publish |
 | `:ReviewApprove` | Approve the open MR/PR without submitting local drafts |
 | `:ReviewRequestChanges` | Request changes on the open MR/PR without submitting local drafts |
+| `:ReviewResolve` | Resolve the GitLab conversation under the cursor |
+| `:ReviewResolveAll` | Warn and confirm before resolving all open GitLab MR conversations |
 | `:ReviewClose` | Close the review tab |
 | `:checkhealth review` | Check dependencies |
 
@@ -353,6 +357,42 @@ explains why. Local drafts have no published URL.
 Configure `keymaps.open_comment` to change the shortcut, or set it to `false`
 to keep only the command.
 
+### Comment reactions
+
+Reactions appear below each comment and reply in inline discussions and
+`:ReviewThreads`, for example `Reactions: 👍 2 · ❤️ 1`. Discussion windows also
+show who reacted when the provider exposes this information.
+
+GitLab reads note emoji awards; GitHub exposes reaction counts on review comments;
+Codeberg reads comment reactions. These are read-only operations. Reactions are
+reloaded with discussions by `:ReviewRefresh`. If a reaction endpoint fails, the
+comment stays readable and shows `Reactions unavailable`.
+
+### Resolve GitLab conversations
+
+Run `:ReviewResolve` on a commented diff line or anywhere in a conversation opened
+with `gt`, `gT` or `:ReviewThreads`. A command on a reply resolves the entire
+conversation. If several conversations cover the selected diff line, choose
+which one to resolve. Already resolved and non-resolvable conversations are skipped.
+The action is sent immediately after selecting the conversation.
+
+Run `:ReviewResolveAll` from the open MR session to resolve every currently
+unresolved, resolvable GitLab conversation, including outdated ones. A warning
+dialog shows the count and MR number; **Cancel** is the first/default choice.
+Confirm explicitly to continue. Newly created conversations after the warning
+are not included.
+
+Both commands use GitLab's native discussion resolution API and require the
+corresponding permission. They check the MR revision and reread each conversation
+before writing. New or edited comments stop resolution so you can refresh and
+read the changes. Local drafts stay local.
+
+Each confirmed resolution is kept visible in the diff and open discussion
+windows. If an API request fails, processing stops; earlier confirmed resolutions
+are retained and the remaining conversations are left alone. Check GitLab before
+retrying if a request's outcome could not be confirmed. GitHub and Codeberg
+conversation resolution is not implemented.
+
 ### Inline discussions
 
 Run `:ReviewToggleComments` or press `<leader>rt` to show or hide discussions
@@ -372,7 +412,7 @@ change the shortcut, or set it to `false` to keep only the command.
 Only discussions that can be mapped to the displayed diff appear inline.
 General comments and discussions on unavailable lines remain accessible with
 `gT` or `:ReviewThreads`. Local drafts keep their compact markers.
-Customize `ReviewCommentBorder`, `ReviewCommentAuthor` and `ReviewCommentBody`
+Customize `ReviewCommentBorder`, `ReviewCommentAuthor`, `ReviewCommentBody` and `ReviewCommentReaction`
 to change the blocks' colors.
 
 ### Reply to a discussion
@@ -465,7 +505,8 @@ require("review").setup({
 - Commit diffs compare against the first parent. Root commits are not supported.
 - Pipeline/check status, approval and change requests on all providers.
 - Discussion reading and new comments on all providers; replies on GitLab and
-  GitHub. Codeberg reply drafts and discussion resolution are not implemented.
+  GitHub. Conversation resolution on GitLab. Codeberg reply drafts and GitHub/
+  Codeberg conversation resolution are not implemented.
 - The provider must expose the file's diff to accept a positional comment.
 - GitHub's files API exposes at most 3000 changed files. Larger PRs are rejected
   instead of presenting an incomplete review. Commit lists above 250 entries

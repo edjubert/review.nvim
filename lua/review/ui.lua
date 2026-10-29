@@ -1,6 +1,7 @@
 local threads = require("review.threads")
 local emoji = require("review.emoji")
 local status = require("review.status")
+local reactions = require("review.reactions")
 local M = {}
 local namespace = vim.api.nvim_create_namespace("review")
 local comment_namespace = vim.api.nvim_create_namespace("review.comments")
@@ -27,6 +28,7 @@ function M.highlights()
     ReviewCommentBorder = "FloatBorder",
     ReviewCommentAuthor = "Title",
     ReviewCommentBody = "NormalFloat",
+    ReviewCommentReaction = "Special",
   }
   for name, link in pairs(links) do vim.api.nvim_set_hl(0, name, { default = true, link = link }) end
 end
@@ -215,7 +217,7 @@ function M.create(session)
 end
 
 local function footer_hints(session)
-  return {
+  local hints = {
     " Enter open · gA complete " .. session.provider.kind,
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
     " ]c/[c commits · ]f/[f files",
@@ -230,6 +232,8 @@ local function footer_hints(session)
     " " .. (M.submit_key(session) or ":ReviewSubmit") .. " submit · q close",
     " :ReviewApprove / :ReviewRequestChanges",
   }
+  if session.provider.resolve then hints[#hints + 1] = " :ReviewResolve / :ReviewResolveAll" end
+  return hints
 end
 
 -- A non-focusable footer remains at the bottom even when the tree scrolls.
@@ -448,6 +452,8 @@ local function inline_discussion(session, discussion)
       for _, text in ipairs(vim.split(emoji.render(note.body or ""), "\n", { plain = true })) do
         append("  │  ", text, "ReviewCommentBody")
       end
+      local reaction_text = reactions.text(note)
+      if reaction_text then append("  │  ", reaction_text, "ReviewCommentReaction") end
     end
   end
   append("  ╰─ ", "gt: full discussion · " .. (M.reply_key(session) or ":ReviewReply") .. ": reply · "
@@ -562,6 +568,11 @@ function M.document(title, lines, opts)
     end, { buffer = buf, silent = true, desc = "Jump to the comment line" })
   end
   return buf, win
+end
+
+function M.update_document(buf, lines)
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  set_lines(buf, #lines > 0 and lines or { "No discussions in this review." })
 end
 
 return M

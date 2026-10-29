@@ -3,6 +3,7 @@ local url = require("review.url")
 local position = require("review.position")
 local threads = require("review.threads")
 local status = require("review.status")
+local reactions = require("review.reactions")
 local M = { name = "GitHub", cli = "gh", kind = "PR", label = "pull request", prefix = "#" }
 
 function M.head_ref(target)
@@ -175,6 +176,7 @@ function M.discussions(target, refs, files)
       web_url = type(comment.html_url) == "string" and comment.html_url or nil,
       -- REST comments do not expose a thread's resolved state.
       outdated = not line, system = false,
+      reactions = reactions.summary(comment.reactions),
     }
     if comment.id == id then table.insert(by_id[id].notes, 1, note)
     else by_id[id].notes[#by_id[id].notes + 1] = note end

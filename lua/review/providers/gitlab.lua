@@ -3,6 +3,7 @@ local url = require("review.url")
 local position = require("review.position")
 local threads = require("review.threads")
 local status = require("review.status")
+local reactions = require("review.reactions")
 local M = { name = "GitLab", cli = "glab", kind = "MR", label = "merge request", prefix = "!" }
 
 function M.head_ref(target)
@@ -11,8 +12,8 @@ end
 
 M.build_position = position.build
 
-function M.request(target, endpoint, body)
-  local argv = { "glab", "api", "--hostname", target.host, "--method", body and "POST" or "GET", endpoint }
+function M.request(target, endpoint, body, method)
+  local argv = { "glab", "api", "--hostname", target.host, "--method", method or (body and "POST" or "GET"), endpoint }
   local opts = {}
   if body then
     vim.list_extend(argv, { "--input", "-" })
@@ -69,16 +70,95 @@ function M.current(target)
   return M.request(target, M.mr_path(target))
 end
 
+local function comment_metadata(target, discussion)
+  for _, note in ipairs(discussion.notes or {}) do
+    if not note.system and type(note.id) == "number" and note.id > 0 and note.id % 1 == 0 then
+      note.web_url = target.url .. "#note_" .. note.id
+    end
+  end
+  return discussion
+end
+
+function M.note_reactions(target, note)
+  return reactions.aggregate(M.pages(target, M.mr_path(target) .. "/notes/" .. note.id .. "/award_emoji"))
+end
+
 function M.discussions(target)
   local discussions = M.pages(target, M.mr_path(target) .. "/discussions")
   for _, discussion in ipairs(discussions) do
+    comment_metadata(target, discussion)
     for _, note in ipairs(discussion.notes or {}) do
       if not note.system and type(note.id) == "number" and note.id > 0 and note.id % 1 == 0 then
-        note.web_url = target.url .. "#note_" .. note.id
+        local ok, result = pcall(M.note_reactions, target, note)
+        if ok then note.reactions = result else note.reactions_error = tostring(result) end
       end
     end
   end
   return discussions
+end
+
+function M.is_resolved(discussion)
+  local found = false
+  for _, note in ipairs(discussion.notes or {}) do
+    if not note.system and note.resolvable == true then
+      found = true
+      if note.resolved ~= true then return false end
+    end
+  end
+  return found
+end
+
+function M.can_resolve(discussion)
+  if type(discussion.id) ~= "string" or discussion.id == "" then return false end
+  for _, note in ipairs(discussion.notes or {}) do
+    if not note.system and note.resolvable == true and note.resolved == false then return true end
+  end
+  return false
+end
+
+function M.resolve(target, discussion)
+  if type(discussion.id) ~= "string" or discussion.id == "" then
+    error("This conversation has no valid GitLab discussion ID.", 0)
+  end
+  local endpoint = M.mr_path(target) .. "/discussions/" .. url.encode(discussion.id)
+  local current = M.request(target, endpoint)
+  if type(current) ~= "table" or current.id ~= discussion.id or type(current.notes) ~= "table" then
+    error("The original GitLab conversation is no longer available. Refresh the review.", 0)
+  end
+  if M.is_resolved(current) then return comment_metadata(target, current), false end
+  if not M.can_resolve(current) then error("This GitLab conversation cannot be resolved.", 0) end
+  local original_root, current_root = threads.root(discussion), threads.root(current)
+  if not original_root or not current_root or original_root.id ~= current_root.id then
+    error("The original GitLab comment is no longer available. Refresh the review.", 0)
+  end
+  local expected = {}
+  for _, note in ipairs(discussion.notes or {}) do
+    if not note.system then
+      if type(note.id) ~= "number" or note.id <= 0 or note.id % 1 ~= 0 then
+        error("This conversation has no valid GitLab comment ID. Refresh the review.", 0)
+      end
+      expected[note.id] = note
+    end
+  end
+  for _, note in ipairs(current.notes) do
+    if not note.system then
+      local old = expected[note.id]
+      if not old or old.body ~= note.body then
+        error("This conversation changed. Refresh and read it before resolving it.", 0)
+      end
+    end
+  end
+  local result = M.request(target, endpoint, { resolved = true }, "PUT")
+  if type(result) ~= "table" or result.id ~= discussion.id or not M.is_resolved(result) then
+    error("GitLab did not confirm the resolved conversation. Check the MR before retrying.", 0)
+  end
+  -- Keep known reactions until the subsequent read-only refresh. A failed
+  -- reaction read must never turn a confirmed resolution into an uncertain one.
+  for _, note in ipairs(result.notes or {}) do
+    local old = expected[note.id]
+    if old then note.reactions, note.reactions_error = old.reactions, old.reactions_error end
+  end
+  return comment_metadata(target, result), true
 end
 
 function M.post(target, draft)
