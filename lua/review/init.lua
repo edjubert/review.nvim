@@ -7,6 +7,7 @@ local defaults = {
     info = "<leader>ri", toggle_comments = "<leader>rt", reply = "<leader>rR",
     open_comment = "<leader>ro",
     search_files = "/",
+    toggle_viewed = "<leader>rv",
   },
   clone_protocol = "ssh",
   repo = nil,
@@ -19,7 +20,8 @@ function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
   assert(type(M.config.inline_comments) == "boolean", "inline_comments must be a boolean")
-  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments", "reply", "open_comment", "search_files" }) do
+  for _, name in ipairs({ "comment", "submit", "refresh", "info", "toggle_comments", "reply", "open_comment",
+      "search_files", "toggle_viewed" }) do
     assert(type(M.config.keymaps[name]) == "string" or M.config.keymaps[name] == false,
       "keymaps." .. name .. " must be a mapping string or false")
   end
@@ -143,6 +145,14 @@ function M.files()
   M.session:search_files()
 end
 
+function M.viewed(enabled)
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:mark_viewed(enabled)
+end
+
 function M.toggle_comments()
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
@@ -160,6 +170,12 @@ function M._commands()
     { desc = "Browse GitLab MR pipelines and jobs in Telescope" })
   vim.api.nvim_create_user_command("ReviewFiles", M.files,
     { desc = "Search the current review's changed files in Telescope" })
+  vim.api.nvim_create_user_command("ReviewViewed", function() M.viewed(true) end,
+    { desc = "Mark the selected review file viewed locally" })
+  vim.api.nvim_create_user_command("ReviewUnviewed", function() M.viewed(false) end,
+    { desc = "Mark the selected review file unviewed locally" })
+  vim.api.nvim_create_user_command("ReviewToggleViewed", function() M.viewed() end,
+    { desc = "Toggle the selected review file's local viewed state" })
   vim.api.nvim_create_user_command("ReviewComment", function(args) M.comment(args.line1, args.line2) end,
     { range = true, desc = "Create a local comment draft on a line or range" })
   vim.api.nvim_create_user_command("ReviewReply", M.reply,

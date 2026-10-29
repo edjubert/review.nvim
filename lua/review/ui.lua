@@ -2,6 +2,7 @@ local threads = require("review.threads")
 local emoji = require("review.emoji")
 local status = require("review.status")
 local reactions = require("review.reactions")
+local viewed = require("review.viewed")
 local M = {}
 local namespace = vim.api.nvim_create_namespace("review")
 local comment_namespace = vim.api.nvim_create_namespace("review.comments")
@@ -19,6 +20,7 @@ function M.highlights()
     ReviewFileModified = "DiagnosticWarn",
     ReviewFileDeleted = "DiagnosticError",
     ReviewFileRenamed = "DiagnosticInfo",
+    ReviewFileViewed = "DiagnosticOk",
     ReviewSelected = "CursorLine",
     ReviewDraftCount = "Special",
     ReviewHelp = "Comment",
@@ -109,6 +111,12 @@ function M.search_files_key(session)
   return key
 end
 
+function M.toggle_viewed_key(session)
+  local key = (session.config.keymaps or {}).toggle_viewed
+  if key == nil then return "<leader>rv" end
+  return key
+end
+
 function M.bind_open_comment(session, buf)
   local key = M.open_comment_key(session)
   if key then
@@ -153,6 +161,11 @@ function M.bind(session, buf)
   if toggle_comments_key then
     vim.keymap.set("n", toggle_comments_key, function() session:toggle_comments() end,
       { buffer = buf, silent = true, desc = "Show or hide inline discussions" })
+  end
+  local toggle_viewed_key = M.toggle_viewed_key(session)
+  if toggle_viewed_key then
+    vim.keymap.set("n", toggle_viewed_key, function() session:mark_viewed() end,
+      { buffer = buf, silent = true, desc = "Toggle this file's local viewed state" })
   end
 end
 
@@ -233,6 +246,7 @@ local function footer_hints(session)
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
     " ]c/[c commits · ]f/[f files",
     " " .. (M.search_files_key(session) or ":ReviewFiles") .. " search files (Telescope)",
+    " " .. (M.toggle_viewed_key(session) or ":ReviewToggleViewed") .. " toggle viewed",
     " ]h/[h next/previous change",
     " gt thread here · gT all threads",
     " " .. (M.reply_key(session) or ":ReviewReply") .. " reply to thread",
@@ -329,17 +343,30 @@ function M.panel(session)
     end
     lines[#lines + 1] = ""
   end
+  if session.files and #session.files > 0 then
+    local count = 0
+    for _, file in ipairs(session.files) do
+      if viewed.is(session.viewed, session.base, session.head, file) then count = count + 1 end
+    end
+    lines[#lines + 1] = session.viewed_error and "Viewed: unavailable"
+      or ("Viewed: %d/%d files"):format(count, #session.files)
+    highlight(#lines, 0, #lines[#lines], session.viewed_error and "ReviewStatusWarn" or "ReviewHelp")
+    lines[#lines + 1] = ""
+  end
   local function files()
     local status_groups = {
       A = "ReviewFileAdded", M = "ReviewFileModified", D = "ReviewFileDeleted",
       R = "ReviewFileRenamed", C = "ReviewFileAdded",
     }
     for index, file in ipairs(session.files or {}) do
-      entry(("    %s %s%s"):format(file.status, file.new_path,
+      local marked = viewed.is(session.viewed, session.base, session.head, file)
+      local marker = session.viewed_error and "[?]" or marked and "[x]" or "[ ]"
+      entry(("    %s %s %s%s"):format(marker, file.status, file.new_path,
         session.file_index == index and " ◀" or ""), { file = index },
         status_groups[file.status] or "ReviewFile", session.file_index == index)
+      highlight(#lines, 4, 7, marked and "ReviewFileViewed" or "ReviewHelp")
       local directory = file.new_path:match("^(.*/)")
-      if directory then highlight(#lines, 6, 6 + #directory, "ReviewDirectory") end
+      if directory then highlight(#lines, 10, 10 + #directory, "ReviewDirectory") end
     end
     if session.files and #session.files == 0 then lines[#lines + 1] = "    No changed files" end
   end
@@ -367,12 +394,24 @@ function M.panel(session)
   M.footer(session)
 end
 
+function M.file_title(session, current)
+  current = current or session.current
+  local win = session.viewer_win
+  if not current or not win or not vim.api.nvim_win_is_valid(win) then return end
+  local marked = viewed.is(session.viewed, current.base, current.head, current.file)
+  local title = current.file.new_path .. " · "
+    .. (session.commit_index == 0 and "complete " .. session.provider.kind or current.head:sub(1, 8))
+    .. (session.viewed_error and " · [viewed unavailable]" or marked and " · [viewed]" or " · [unviewed]")
+  vim.wo[win].winbar = title:gsub("%%", "%%%%")
+end
+
 function M.render(session, current)
   if not M.valid(session) then return end
   local buf, win = session.viewer_buf, session.viewer_win
   if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_win_is_valid(win) then return end
   vim.api.nvim_buf_clear_namespace(buf, namespace, 0, -1)
   vim.api.nvim_buf_clear_namespace(buf, comment_namespace, 0, -1)
+  M.file_title(session, current)
   if not current.rows then
     set_lines(buf, { current.error or "Unable to display this file." })
     vim.bo[buf].filetype = ""
@@ -387,9 +426,6 @@ function M.render(session, current)
   vim.wo[win].relativenumber = false
   vim.wo[win].wrap = false
   vim.wo[win].signcolumn = "no"
-  local title = current.file.new_path .. " · "
-    .. (session.commit_index == 0 and "complete " .. session.provider.kind or current.head:sub(1, 8))
-  vim.wo[win].winbar = title:gsub("%%", "%%%%")
   for i, row in ipairs(current.rows) do
     local change = row.kind == "add" and "DiffAdd" or row.kind == "delete" and "DiffDelete" or nil
     local number = ("%5s %5s %s "):format(row.old_line or "", row.new_line or "",

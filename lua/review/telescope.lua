@@ -1,5 +1,6 @@
 local async = require("review.async")
 local status = require("review.status")
+local viewed = require("review.viewed")
 local M = {}
 local telescope
 
@@ -299,9 +300,12 @@ function M.files(session)
         if state == "" then state = file.new_file and "A" or file.deleted_file and "D" or "M" end
         local label = text(file.new_path)
         if state == "R" or state == "C" then label = text(file.old_path) .. " → " .. label end
+        local marked = viewed.is(session.viewed, base, head, file)
+        local marker = session.viewed_error and "[?]" or marked and "[x]" or "[ ]"
         return {
-          value = file, display = state .. "  " .. label,
-          ordinal = text(file.new_path) .. " " .. text(file.old_path),
+          value = file, display = marker .. " " .. state .. "  " .. label,
+          ordinal = (session.viewed_error and "unknown" or marked and "viewed" or "unviewed")
+            .. " " .. text(file.new_path) .. " " .. text(file.old_path),
         }
       end,
     }),

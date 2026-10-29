@@ -17,6 +17,7 @@ in Neovim.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
 - Search the current comparison's changed files in Telescope from the panel.
+- Mark files viewed or unviewed and keep local progress between sessions.
 - See emoji reactions and counts on comments and replies.
 - Select deleted lines as well as added lines.
 - Save, edit and delete persistent local comment drafts.
@@ -112,7 +113,9 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewPipelines", "ReviewFiles", "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
+    "Review", "ReviewInfo", "ReviewPipelines", "ReviewFiles",
+    "ReviewViewed", "ReviewUnviewed", "ReviewToggleViewed",
+    "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
     "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit",
     "ReviewApprove", "ReviewRequestChanges", "ReviewResolve", "ReviewResolveAll", "ReviewClose",
   },
@@ -161,6 +164,9 @@ merge base.
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewPipelines` | Browse the GitLab MR's pipelines and jobs in Telescope |
 | `:ReviewFiles` | Search the current comparison's changed files in Telescope |
+| `:ReviewViewed` | Mark the file under the cursor viewed locally |
+| `:ReviewUnviewed` | Remove the file's local viewed marker |
+| `:ReviewToggleViewed` | Toggle the file's local viewed marker |
 | `:ReviewComment` | Compose a local draft on the current line |
 | `:'<,'>ReviewComment` | Compose a local draft on a line range |
 | `:ReviewReply` | Draft a reply to a discussion on the current diff line |
@@ -183,6 +189,7 @@ merge base.
 | --- | --- |
 | `Enter` in the panel | Open a commit or file |
 | `/` in the panel | Search changed files in Telescope |
+| `<leader>rv` in the panel or diff | Toggle the file's local viewed marker |
 | `]c` / `[c` | Next / previous commit |
 | `]f` / `[f` | Next / previous file |
 | `]h` / `[h` | Next / previous change block in the current file |
@@ -225,6 +232,30 @@ is open, reopen the search before selecting a file.
 Configure `keymaps.search_files` to change the panel shortcut, or set it to `false`
 to keep only `:ReviewFiles`. The diff buffer retains Neovim's normal `/` search.
 File search requires `telescope.nvim` and `plenary.nvim`.
+
+### Viewed files
+
+Use `:ReviewViewed` to mark the file under the cursor in the panel, or the file
+displayed in the diff. Use `:ReviewUnviewed` to remove the marker.
+`:ReviewToggleViewed` or `<leader>rv` switches between the two states.
+Opening a file leaves its viewed state unchanged.
+
+The panel and `:ReviewFiles` display `[x]` for viewed files and `[ ]` for unviewed
+files. The panel also shows `Viewed: N/M files` for the current comparison, and
+the diff's title shows `[viewed]` or `[unviewed]`. Customize `ReviewFileViewed`
+to change the viewed marker's color.
+
+Progress is stored locally under `state_dir/viewed/`, separately for each MR/PR
+and exact Git comparison (base, head, old/new paths and file status). Reopening
+the same comparison restores its markers. Individual commits and the complete
+MR/PR have separate progress; a new comparison starts unviewed. Returning to a
+previous comparison restores its own progress.
+
+These commands work with all supported providers and only update local progress.
+Configure `keymaps.toggle_viewed` to change the shortcut, or set it to `false`
+to keep only the commands. If the state file cannot be read, the review remains
+available and markers display `[?]`; an invalid file is preserved. Failed saves
+leave the displayed state unchanged. `:ReviewRefresh` reloads local progress.
 
 ### Review title and description
 
@@ -541,6 +572,7 @@ require("review").setup({
     reply = "<leader>rR",   -- normal, diff; false disables this mapping
     open_comment = "<leader>ro", -- normal, diff/discussion; false disables this mapping
     search_files = "/",   -- normal, panel only; false disables this mapping
+    toggle_viewed = "<leader>rv", -- normal, panel/diff; false disables this mapping
   },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected
@@ -557,6 +589,7 @@ require("review").setup({
 - Commit diffs compare against the first parent. Root commits are not supported.
 - Pipeline/check status, approval and change requests on all providers.
 - GitLab pipeline/job details and file search on all providers via optional Telescope.
+- Local viewed/unviewed progress on all providers, scoped to each Git comparison.
 - Discussion reading and new comments on all providers; replies on GitLab and
   GitHub. Conversation resolution on GitLab. Codeberg reply drafts and GitHub/
   Codeberg conversation resolution are not implemented.

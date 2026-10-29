@@ -4,6 +4,7 @@ local git = require("review.git")
 local diff = require("review.diff")
 local position = require("review.position")
 local drafts = require("review.drafts")
+local viewed = require("review.viewed")
 local threads = require("review.threads")
 local ui = require("review.ui")
 local Session = {}
@@ -14,13 +15,21 @@ local function notify(message, level)
 end
 
 function Session.new(target, config)
-  return setmetatable({
+  local self = setmetatable({
     target = target, config = config, drafts = drafts.load(config, target),
     provider = providers.for_target(target),
     inline_comments = config.inline_comments == true,
     thread_documents = {}, thread_views = {},
     commit_index = 0, files = {}, closed = false, generation = 0,
   }, Session)
+  self:reload_viewed()
+  return self
+end
+
+function Session:reload_viewed()
+  local ok, state = pcall(viewed.load, self.config, self.target)
+  self.viewed, self.viewed_error = ok and state or nil, not ok and state or nil
+  if not ok then notify(state, vim.log.levels.WARN) end
 end
 
 function Session:task(fn, on_error, generation)
@@ -119,6 +128,7 @@ function Session:refresh()
       end
     end
     self.data, self.repo, self.ready = data, repo, true
+    if not initial then self:reload_viewed() end
     self.error = nil
     self:select_commit(index, selection)
     if not initial then notify("Review refreshed.") end
@@ -440,6 +450,41 @@ function Session:show_drafts()
       end
     end)
   end)
+end
+
+function Session:mark_viewed(enabled)
+  if self.closed or not ui.valid(self) then return end
+  if not self.ready or self.refreshing then
+    notify("Wait for the review to finish loading.", vim.log.levels.WARN)
+    return
+  end
+  local buf, file = vim.api.nvim_get_current_buf(), nil
+  if buf == self.panel_buf then
+    local row = vim.api.nvim_win_get_cursor(0)[1]
+    local entry = self.panel_entries and self.panel_entries[row]
+    file = entry and entry.file and self.files[entry.file] or nil
+  elseif buf == self.viewer_buf and self.current
+      and self.current.base == self.base and self.current.head == self.head then
+    file = self.current.file
+  end
+  if not file then
+    notify("Use this command on a file in the review panel or in its loaded diff.", vim.log.levels.WARN)
+    return
+  end
+  local ok, state, value = pcall(function()
+    -- Merge the latest local state before writing, including other comparisons.
+    local latest = viewed.load(self.config, self.target)
+    local value = enabled
+    if value == nil then value = not viewed.is(latest, self.base, self.head, file) end
+    viewed.set(latest, self.base, self.head, file, value)
+    viewed.save(self.config, self.target, latest)
+    return latest, value
+  end)
+  if not ok then notify(state, vim.log.levels.ERROR); return end
+  self.viewed, self.viewed_error = state, nil
+  ui.panel(self)
+  ui.file_title(self)
+  notify((value and "Viewed: " or "Unviewed: ") .. file.new_path)
 end
 
 function Session:search_files()
