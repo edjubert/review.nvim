@@ -31,8 +31,21 @@ function M.highlights()
     ReviewCommentAuthor = "Title",
     ReviewCommentBody = "NormalFloat",
     ReviewCommentReaction = "Special",
+    ReviewPipelineHeading = "ReviewPipelineStage",
   }
   for name, link in pairs(links) do vim.api.nvim_set_hl(0, name, { default = true, link = link }) end
+  local title = vim.api.nvim_get_hl(0, { name = "Title", link = false })
+  local pipeline_colors = {
+    ReviewPipelineSuccess = { fg = "#9ece6a", ctermfg = 114 },
+    ReviewPipelineError = { fg = "#f7768e", ctermfg = 203 },
+    ReviewPipelinePending = { fg = "#ff9e64", ctermfg = 208 },
+    ReviewPipelineRunning = { fg = "#7aa2f7", ctermfg = 111 },
+    ReviewPipelineInactive = { fg = "#7a8499", ctermfg = 244 },
+    ReviewPipelineStage = { fg = title.fg or "#c0caf5", ctermfg = title.ctermfg, bold = true },
+  }
+  for name, colors in pairs(pipeline_colors) do
+    vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", { default = true }, colors))
+  end
 end
 
 vim.api.nvim_create_autocmd("ColorScheme", {

@@ -302,6 +302,22 @@ Its preview loads the selected pipeline's jobs and downstream triggers
 asynchronously, including stage, status, duration and failure reason. It also
 indicates whether the pipeline matches the MR head revision loaded in your review.
 
+Jobs are grouped under bold stage headings, with the stage name shown once.
+Each job shows an icon, its name, status and duration. Pipeline and job rows,
+preview status fields and job lines use these colors:
+
+| State | Color |
+| --- | --- |
+| Success | Green |
+| Failed / error | Red |
+| Pending / queued / waiting for resources / scheduled | Orange |
+| Running / preparing | Blue |
+| Created / manual / skipped / canceled / unknown | Grey |
+
+Customize `ReviewPipelineSuccess`, `ReviewPipelineError`, `ReviewPipelinePending`,
+`ReviewPipelineRunning`, `ReviewPipelineInactive` and `ReviewPipelineStage`
+to change these colors and stage headings.
+
 | Picker | Key | Action |
 | --- | --- | --- |
 | Pipelines | `Enter` | Browse the selected pipeline's jobs |

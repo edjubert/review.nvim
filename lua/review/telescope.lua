@@ -3,6 +3,7 @@ local status = require("review.status")
 local viewed = require("review.viewed")
 local M = {}
 local telescope
+local pipeline_namespace = vim.api.nvim_create_namespace("review.pipeline")
 
 local function notify(message, level)
   vim.notify(message, level or vim.log.levels.INFO, { title = "review" })
@@ -39,15 +40,34 @@ local function duration(value)
   return ("%dh %02dm %02ds"):format(math.floor(seconds / 3600), math.floor(seconds / 60) % 60, seconds % 60)
 end
 
+local function pipeline_style(state)
+  if state == "success" or state == "completed_success" then return "ReviewPipelineSuccess", "✓" end
+  if state == "failed" or state == "failure" or state == "error" or state == "completed_error"
+      or state == "timed_out" or state == "startup_failure" then
+    return "ReviewPipelineError", "✗"
+  end
+  if state == "pending" or state == "queued" or state == "waiting_for_resource" or state == "scheduled" then
+    return "ReviewPipelinePending", "◷"
+  end
+  if state == "running" or state == "in_progress" or state == "preparing" then
+    return "ReviewPipelineRunning", "▶"
+  end
+  -- Created jobs have not been scheduled yet. Manual, skipped and canceled
+  -- jobs also stay neutral instead of inheriting the pending pipeline color.
+  return "ReviewPipelineInactive", "○"
+end
+
 local function field(lines, name, value)
   local label = text(value)
   if label ~= "" then lines[#lines + 1] = name .. ": " .. label end
 end
 
 local function metadata(value, kind)
-  local lines = { "# " .. kind .. " #" .. value.id, "" }
+  local lines = { kind .. " #" .. value.id, "" }
+  local highlights = { { line = 1, group = "ReviewPipelineHeading" } }
   field(lines, "Name", value.name)
   field(lines, "Status", status.label(value.state))
+  highlights[#highlights + 1] = { line = #lines, group = pipeline_style(value.state) }
   field(lines, "Stage", value.stage)
   field(lines, "Ref", value.ref)
   field(lines, "Commit", value.sha)
@@ -66,41 +86,82 @@ local function metadata(value, kind)
   field(lines, "URL", value.web_url)
   if value.downstream then
     lines[#lines + 1] = ""
-    lines[#lines + 1] = "## Downstream pipeline #" .. value.downstream.id
+    lines[#lines + 1] = "Downstream pipeline #" .. value.downstream.id
+    highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineHeading" }
     field(lines, "Status", value.downstream.state)
+    highlights[#highlights + 1] = { line = #lines, group = pipeline_style(value.downstream.state) }
     field(lines, "Ref", value.downstream.ref)
     field(lines, "URL", value.downstream.web_url)
   end
-  return lines
+  return lines, highlights
 end
 
 local function pipeline_preview(pipeline, head)
-  local lines = metadata(pipeline, "Pipeline")
+  local lines, highlights = metadata(pipeline, "Pipeline")
   field(lines, "Matches review head", pipeline.sha == head and "yes" or "no")
-  if not pipeline.jobs then return lines end
-  lines[#lines + 1], lines[#lines + 2] = "", "## Jobs"
-  if pipeline.jobs_error then field(lines, "Jobs unavailable", pipeline.jobs_error) end
-  if pipeline.bridges_error then field(lines, "Triggers unavailable", pipeline.bridges_error) end
+  if not pipeline.jobs then return lines, highlights end
+  lines[#lines + 1], lines[#lines + 2] = "", "Jobs"
+  highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineHeading" }
+  for _, failure in ipairs({
+    { "Jobs unavailable", pipeline.jobs_error }, { "Triggers unavailable", pipeline.bridges_error },
+  }) do
+    if failure[2] then
+      field(lines, failure[1], failure[2])
+      highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
+    end
+  end
   if #pipeline.jobs == 0 and not pipeline.jobs_error and not pipeline.bridges_error then
     lines[#lines + 1] = "No jobs in this pipeline."
   end
+  local stages, by_stage = {}, {}
   for _, job in ipairs(pipeline.jobs) do
-    lines[#lines + 1] = ("- %s · %s · %s · %s%s"):format(
-      text(job.stage), text(job.name), text(status.label(job.state)), duration(job.duration),
-      job.allow_failure and " (failure allowed)" or "")
-    if job.failure_reason then lines[#lines + 1] = "  Failure: " .. text(job.failure_reason) end
-    if job.downstream then
-      lines[#lines + 1] = ("  Downstream #%d: %s"):format(job.downstream.id, text(status.label(job.downstream.state)))
+    local name = text(job.stage)
+    if name == "" then name = "Other jobs" end
+    local stage = by_stage[name]
+    if not stage then
+      stage = { name = name, jobs = {} }
+      by_stage[name], stages[#stages + 1] = stage, stage
+    end
+    stage.jobs[#stage.jobs + 1] = job
+  end
+  -- Preserve the stages' first occurrence in the provider's ordered job list.
+  for _, stage in ipairs(stages) do
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = ("%s (%d)"):format(stage.name, #stage.jobs)
+    highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineStage" }
+    for _, job in ipairs(stage.jobs) do
+      local group, icon = pipeline_style(job.state)
+      lines[#lines + 1] = ("  %s %s · %s · %s%s"):format(
+        icon, text(job.name), text(status.label(job.state)), duration(job.duration),
+        job.allow_failure and " (failure allowed)" or "")
+      highlights[#highlights + 1] = { line = #lines, group = group }
+      if job.failure_reason then
+        lines[#lines + 1] = "    Failure: " .. text(job.failure_reason)
+        highlights[#highlights + 1] = { line = #lines, group = group }
+      end
+      if job.downstream then
+        local downstream_group, downstream_icon = pipeline_style(job.downstream.state)
+        lines[#lines + 1] = ("    %s Downstream #%d: %s"):format(
+          downstream_icon, job.downstream.id, text(status.label(job.downstream.state)))
+        highlights[#highlights + 1] = { line = #lines, group = downstream_group }
+      end
     end
   end
-  return lines
+  return lines, highlights
 end
 
-local function preview_buffer(buf, lines)
+local function preview_buffer(buf, lines, highlights)
   if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].filetype = "markdown"
+  -- Explicit decorations keep job colors independent of Markdown rendering.
+  vim.bo[buf].filetype = "review-pipeline"
+  vim.api.nvim_buf_clear_namespace(buf, pipeline_namespace, 0, -1)
+  for _, highlight in ipairs(highlights or {}) do
+    vim.api.nvim_buf_set_extmark(buf, pipeline_namespace, highlight.line - 1, 0, {
+      end_col = #lines[highlight.line], hl_group = highlight.group, priority = 200,
+    })
+  end
   vim.bo[buf].modifiable = false
 end
 
@@ -121,12 +182,12 @@ local function columns(value, job)
     items = { { width = 10 }, { width = 12 }, { remaining = true } },
   })
   return function()
-    local state = status.pipeline({ value.state })
+    local group = pipeline_style(value.state)
     return displayer({
-      "#" .. value.id, { text(status.label(value.state)), status.highlight(state) },
-      job and (text(value.name) .. " · " .. text(value.stage) .. " · " .. duration(value.duration))
+      { "#" .. value.id, group }, { text(status.label(value.state)), group },
+      { job and (text(value.name) .. " · " .. duration(value.duration))
         or (text(value.source) .. " · " .. text(value.sha):sub(1, 8) .. " · "
-          .. text(value.ref) .. " · " .. text(value.created_at)),
+          .. text(value.ref) .. " · " .. text(value.created_at)), group },
     })
   end
 end
@@ -235,16 +296,18 @@ function M.pipelines(session, pipelines)
         define_preview = function(self, entry)
           local buf, pipeline = self.state.bufnr, entry.value
           selected = pipeline
-          local lines = pipeline_preview(pipeline, head)
+          local lines, highlights = pipeline_preview(pipeline, head)
           lines[#lines + 1], lines[#lines + 2] = "", "Loading jobs…"
-          preview_buffer(buf, lines)
+          highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineInactive" }
+          preview_buffer(buf, lines, highlights)
           details(pipeline, function(result, err)
             if not picker_open() or selected ~= pipeline or not self.state or self.state.bufnr ~= buf then return end
             if result then preview_buffer(buf, pipeline_preview(result, head))
             else
-              local error_lines = pipeline_preview(pipeline, head)
+              local error_lines, error_highlights = pipeline_preview(pipeline, head)
               field(error_lines, "Details unavailable", err)
-              preview_buffer(buf, error_lines)
+              error_highlights[#error_highlights + 1] = { line = #error_lines, group = "ReviewPipelineError" }
+              preview_buffer(buf, error_lines, error_highlights)
             end
           end)
         end,
