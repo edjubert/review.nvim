@@ -119,6 +119,8 @@ COMMANDS
     Logs retain ANSI foreground/background colors (16-color, 256-color, RGB)
     and bold/italic/underline/inverse/strikethrough styling. The first 16
     colors use g:terminal_color_0 through g:terminal_color_15 when configured.
+    Leading ISO timestamps and GitLab stream prefixes are grey. Customize
+    ReviewJobTimestamp to change their appearance; message colors are retained.
     Other terminal controls and GitLab section markers are removed.
     The preview scrolls to the end after loading; scroll up for its header.
     Long previews show the last 5,000 lines / 512 KiB with a truncation notice.

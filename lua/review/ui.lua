@@ -47,6 +47,7 @@ function M.highlights()
     ReviewPipelineRunning = { fg = "#7aa2f7", ctermfg = 111 },
     ReviewPipelineInactive = { fg = "#7a8499", ctermfg = 244 },
     ReviewPipelineStage = { fg = title.fg or "#c0caf5", ctermfg = title.ctermfg, bold = true },
+    ReviewJobTimestamp = { fg = "#7a8499", ctermfg = 244, nocombine = true },
   }
   for name, colors in pairs(pipeline_colors) do
     vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", { default = true }, colors))

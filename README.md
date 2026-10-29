@@ -546,6 +546,9 @@ After refreshing, the preview scrolls to the latest output.
 Logs keep their ANSI foreground/background colors (16-color, 256-color and RGB),
 bold, italic, underline, inverse and strikethrough styling. The first 16 colors
 use Neovim's `terminal_color_0` through `terminal_color_15` when configured.
+Leading ISO timestamps and GitLab stream prefixes such as `01O` / `01E` are
+grey, while the message retains its ANSI styling. Customize `ReviewJobTimestamp`
+to change the timestamp appearance.
 Other terminal control sequences and GitLab section markers are removed.
 The preview remains an ordinary read-only buffer. Very long logs show their tail,
 limited to 5,000 lines and 512 KiB, with a truncation notice. The browser link opens

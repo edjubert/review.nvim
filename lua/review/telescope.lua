@@ -176,7 +176,8 @@ local function preview_buffer(buf, lines, highlights, filetype, definitions)
   vim.api.nvim_buf_clear_namespace(buf, pipeline_namespace, 0, -1)
   for _, highlight in ipairs(highlights or {}) do
     vim.api.nvim_buf_set_extmark(buf, pipeline_namespace, highlight.line - 1, highlight.start_col or 0, {
-      end_col = highlight.end_col or #lines[highlight.line], hl_group = highlight.group, priority = 200,
+      end_col = highlight.end_col or #lines[highlight.line], hl_group = highlight.group,
+      priority = highlight.priority or 200,
     })
   end
   vim.bo[buf].modifiable = false
@@ -307,6 +308,18 @@ local function log_lines(trace)
     end
     highlights = retained
     lines = tail
+  end
+  local clock = "^%d%d%d%d%-%d%d%-%d%d[Tt]%d%d:%d%d:%d%d%.?%d*"
+  for index, line in ipairs(lines) do
+    local timestamp = line:match(clock .. "[Zz]") or line:match(clock .. "[%+%-]%d%d:%d%d")
+    if timestamp then
+      local rest = line:sub(#timestamp + 1)
+      local stream = rest:match("^%s+%d%d[OE]%f[%s%z]") or rest:match("^%s+%d%d%d%f[%s%z]") or ""
+      highlights[#highlights + 1] = {
+        line = index, start_col = 0, end_col = #timestamp + #stream,
+        group = "ReviewJobTimestamp", priority = 220,
+      }
+    end
   end
   return lines, truncated, highlights, definitions
 end
