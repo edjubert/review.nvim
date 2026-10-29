@@ -21,6 +21,7 @@ in Neovim.
 - Draft replies to existing GitLab and GitHub discussions from their diff lines.
 - Preview and explicitly publish drafts as inline discussions on GitLab, GitHub
   or Codeberg.
+- Approve the open GitLab merge request with an explicit command.
 - Open the discussion under the cursor or browse all review discussions.
 - Toggle discussion messages and replies directly below their commented lines.
 - Jump from a discussion to its commented line.
@@ -50,7 +51,7 @@ Neovim configuration.
 
 | Provider | Client | Authentication | API used for publication |
 | --- | --- | --- | --- |
-| GitLab | `glab` | `glab auth login` | MR discussions |
+| GitLab | `glab` | `glab auth login` | MR discussions and approvals |
 | GitHub | `gh` | `gh auth login` | PR review comments |
 | Codeberg | `curl` | `CODEBERG_TOKEN` environment variable | Forgejo PR reviews, `COMMENT` event |
 
@@ -105,7 +106,7 @@ With lazy.nvim:
   "edjubert/review.nvim",
   cmd = {
     "Review", "ReviewInfo", "ReviewComment", "ReviewReply", "ReviewOpenComment", "ReviewDrafts",
-    "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit", "ReviewClose",
+    "ReviewThreads", "ReviewToggleComments", "ReviewRefresh", "ReviewSubmit", "ReviewApprove", "ReviewClose",
   },
   opts = {},
 }
@@ -159,6 +160,7 @@ merge base.
 | `:ReviewToggleComments` | Show or hide discussion messages and replies inline |
 | `:ReviewRefresh` | Reload the review, commits, diffs and discussions |
 | `:ReviewSubmit` | Preview drafts and choose whether to publish |
+| `:ReviewApprove` | Approve the open GitLab merge request |
 | `:ReviewClose` | Close the review tab |
 | `:checkhealth review` | Check dependencies |
 
@@ -255,6 +257,10 @@ Run `:ReviewDrafts` or press `gd` to select a saved draft, then choose
 publish them. Choose `Keep local` to retain them without posting.
 
 ![Submission preview with the explicit Keep local or Publish confirmation](assets/screenshots/submission-preview.png)
+
+Run `:ReviewApprove` to approve the GitLab MR in the current review session.
+Approval is sent immediately and requires permission to approve that MR.
+GitHub and Codeberg approvals are not supported.
 
 ### Browse discussions
 

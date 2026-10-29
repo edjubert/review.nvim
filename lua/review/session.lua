@@ -45,8 +45,8 @@ function Session:refresh()
     notify("Open a review with :Review first.", vim.log.levels.WARN)
     return
   end
-  if self.submitting then
-    notify("Wait for comment submission to finish.", vim.log.levels.WARN)
+  if self.submitting or self.approving then
+    notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end
   if self.refreshing then
@@ -586,7 +586,7 @@ function Session:jump_thread(discussion, close)
 end
 
 function Session:submit()
-  if not self.ready or self.submitting or self.refreshing then return end
+  if not self.ready or self.submitting or self.approving or self.refreshing then return end
   if #self.drafts == 0 then notify("No local drafts to submit."); return end
   for _, draft in ipairs(self.drafts) do
     if draft.status == "uncertain" or draft.status == "sending" then
@@ -621,7 +621,8 @@ function Session:submit()
   ui.document("Review drafts · q closes preview", preview)
   vim.ui.select({ "Keep local", "Publish " .. #self.drafts .. " comment(s) to " .. self.provider.name },
     { prompt = "Publish these review comments?" }, function(choice)
-      if not choice or choice == "Keep local" or self.closed or self.submitting or self.refreshing then return end
+      if not choice or choice == "Keep local" or self.closed or self.submitting
+          or self.approving or self.refreshing then return end
       self.submitting = true
       self:task(function()
         local latest = self.provider.current(self.target)
@@ -675,9 +676,35 @@ function Session:submit()
     end)
 end
 
+function Session:approve()
+  if not self.ready or self.closed then
+    notify("Wait for the review to finish loading before approving it.", vim.log.levels.WARN)
+    return
+  end
+  if not self.provider.approve then
+    notify("Approval is only supported for GitLab merge requests.", vim.log.levels.WARN)
+    return
+  end
+  if self.approving or self.submitting or self.refreshing then
+    notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
+    return
+  end
+  self.approving = true
+  self:task(function()
+    self.provider.approve(self.target)
+    self.approving = false
+    notify(("Approved GitLab MR !%d."):format(self.target.iid))
+  end, function()
+    self.approving = false
+  end)
+end
+
 function Session:close()
   if self.closed then return end
-  if self.submitting then notify("Wait for comment submission to finish.", vim.log.levels.WARN); return end
+  if self.submitting or self.approving then
+    notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
+    return
+  end
   self.closed = true
   ui.close(self)
   if self.tab and vim.api.nvim_tabpage_is_valid(self.tab) then

@@ -88,6 +88,11 @@ function M.post(target, draft)
   })
 end
 
+function M.approve(target)
+  -- Approval is only sent by the explicit :ReviewApprove command.
+  return M.request(target, M.mr_path(target) .. "/approve", {})
+end
+
 function M.reply_target(discussion)
   local root = threads.root(discussion)
   if type(discussion.id) ~= "string" or discussion.id == ""
