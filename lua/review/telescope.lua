@@ -5,6 +5,7 @@ local M = {}
 local telescope
 local pipeline_namespace = vim.api.nvim_create_namespace("review.pipeline")
 local job_groups_namespace = vim.api.nvim_create_namespace("review.job-groups")
+local job_previews = {}
 
 local function notify(message, level)
   vim.notify(message, level or vim.log.levels.INFO, { title = "review" })
@@ -165,16 +166,17 @@ local function pipeline_preview(pipeline, head)
   return lines, highlights
 end
 
-local function preview_buffer(buf, lines, highlights, filetype)
+local function preview_buffer(buf, lines, highlights, filetype, definitions)
   if not buf or not vim.api.nvim_buf_is_valid(buf) then return end
+  for name, attributes in pairs(definitions or {}) do vim.api.nvim_set_hl(0, name, attributes) end
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   -- Explicit decorations keep job colors independent of Markdown rendering.
   vim.bo[buf].filetype = filetype or "review-pipeline"
   vim.api.nvim_buf_clear_namespace(buf, pipeline_namespace, 0, -1)
   for _, highlight in ipairs(highlights or {}) do
-    vim.api.nvim_buf_set_extmark(buf, pipeline_namespace, highlight.line - 1, 0, {
-      end_col = #lines[highlight.line], hl_group = highlight.group, priority = 200,
+    vim.api.nvim_buf_set_extmark(buf, pipeline_namespace, highlight.line - 1, highlight.start_col or 0, {
+      end_col = highlight.end_col or #lines[highlight.line], hl_group = highlight.group, priority = 200,
     })
   end
   vim.bo[buf].modifiable = false
@@ -288,23 +290,31 @@ local function log_lines(trace)
       while #trace > 0 and trace:byte(1) >= 128 and trace:byte(1) < 192 do trace = trace:sub(2) end
     end
   end
-  trace = trace:gsub("\27%].-\7", ""):gsub("\27%].-\27\\", "")
-    :gsub("\27[P^_].-\27\\", ""):gsub("\27%[[0-?]*[ -/]*[@-~]", ""):gsub("\27[@-_]", "")
-    :gsub("section_start:%d+:[^\r\n]*\r?", ""):gsub("section_end:%d+:[^\r\n]*\r?", "")
-    :gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("[%z\1-\8\11\12\14-\31\127]", "")
-  local lines = vim.split(trace, "\n", { plain = true })
+  trace = trace:gsub("section_start:%d+:[^\r\n]*\r?", ""):gsub("section_end:%d+:[^\r\n]*\r?", "")
+    :gsub("\r\n", "\n"):gsub("\r", "\n")
+  local lines, highlights, definitions = require("review.ansi").render(trace)
+  -- A final newline does not need an extra blank row at the bottom.
+  if #lines > 1 and lines[#lines] == "" then table.remove(lines) end
   if #lines > 5000 then
     truncated = true
-    local tail = {}
+    local tail, retained, removed = {}, {}, #lines - 5000
     for index = #lines - 4999, #lines do tail[#tail + 1] = lines[index] end
+    for _, highlight in ipairs(highlights) do
+      if highlight.line > removed then
+        highlight.line = highlight.line - removed
+        retained[#retained + 1] = highlight
+      end
+    end
+    highlights = retained
     lines = tail
   end
-  return lines, truncated
+  return lines, truncated, highlights, definitions
 end
 
 local function job_preview(value)
   local job = value.job
   local lines, highlights = metadata(job, "Job")
+  local definitions = {}
   if value.details_error then
     lines[#lines + 1] = "Details unavailable: " .. text(value.details_error)
     highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
@@ -322,14 +332,31 @@ local function job_preview(value)
     lines[#lines + 1] = type(job.erased_at) == "string" and job.erased_at ~= ""
       and "This job's log has been erased." or "No log is available for this job."
   else
-    local output, truncated = log_lines(value.trace)
+    local output, truncated, colors, styles = log_lines(value.trace)
     if truncated then
       lines[#lines + 1] = "Showing the log tail (preview limited to 5000 lines / 512 KiB)."
       highlights[#highlights + 1] = { line = #lines, group = "ReviewStatusWarn" }
     end
+    local offset = #lines
     vim.list_extend(lines, output)
+    for _, highlight in ipairs(colors) do
+      highlight.line = highlight.line + offset
+      highlights[#highlights + 1] = highlight
+    end
+    definitions = styles
   end
-  return lines, highlights
+  return lines, highlights, definitions
+end
+
+function M.refresh_job(session)
+  local buf = vim.api.nvim_get_current_buf()
+  for _, preview in pairs(job_previews) do
+    if preview.session == session and preview.valid() and preview.contains(buf) then
+      preview.refresh()
+      return
+    end
+  end
+  notify("Use :ReviewJobRefresh in a job's Telescope picker.", vim.log.levels.WARN)
 end
 
 function M.pipelines(session, pipelines)
@@ -363,7 +390,7 @@ function M.pipelines(session, pipelines)
       if entry.pending then finish(nil, err) else notify(err, vim.log.levels.ERROR) end
     end)
   end
-  local function job_details(job, done, wanted)
+  local function job_details(job, done, wanted, force)
     local key = tostring(job.project_id or session.target.project) .. "/" .. job.id
     local cached = job_cache[key]
     if cached then
@@ -375,7 +402,7 @@ function M.pipelines(session, pipelines)
       local finished = state == "success" or state == "failed" or state == "canceled" or state == "skipped"
       local erased = cached.value and type(cached.value.job.erased_at) == "string"
         and cached.value.job.erased_at ~= ""
-      if cached.value and not cached.value.deferred
+      if not force and cached.value and not cached.value.deferred
           and ((finished and not cached.value.log_error and not cached.value.details_error
               and (cached.value.trace ~= "" or erased))
             or vim.uv.now() - cached.updated < 3000) then
@@ -434,14 +461,55 @@ function M.pipelines(session, pipelines)
       return
     end
     local prompt, selected, generation, picker = nil, nil, 0, nil
+    local current_preview, current_entry, loading
     local function picker_open()
       return picker and not picker.closed and prompt and vim.api.nvim_buf_is_valid(prompt) and session_open()
+    end
+    local function load_preview(self, entry, force)
+      local buf, job = self.state.bufnr, entry.value
+      current_preview, current_entry = self, entry
+      selected, generation, loading = job, generation + 1, true
+      local request = generation
+      local function wanted()
+        return picker_open() and selected == job and generation == request
+          and picker:get_selection() == entry and self.state and self.state.bufnr == buf
+      end
+      if not force then
+        local lines, highlights, definitions = job_preview({ job = job })
+        preview_buffer(buf, lines, highlights, "review-job-log", definitions)
+      end
+      job_details(job, function(value)
+        if not wanted() then return end
+        loading = false
+        local lines, highlights, definitions = job_preview(value)
+        preview_buffer(buf, lines, highlights, "review-job-log", definitions)
+        -- Telescope attaches the preview buffer on its next scheduled turn.
+        vim.schedule(function()
+          local win = self.state and self.state.winid
+          if not wanted() or not win or not vim.api.nvim_win_is_valid(win)
+              or vim.api.nvim_win_get_buf(win) ~= buf then return end
+          vim.api.nvim_win_set_cursor(win, { #lines, 0 })
+          vim.api.nvim_win_call(win, function() vim.cmd.normal({ args = { "zb" }, bang = true }) end)
+        end)
+      end, wanted, force)
+    end
+    local function refresh()
+      local entry = picker:get_selection()
+      if not entry or not current_preview or not current_preview.state
+          or not current_preview.state.bufnr or current_entry ~= entry then
+        notify("Select a job to refresh its log.", vim.log.levels.WARN)
+      elseif loading then
+        notify("This job's log is already loading.")
+      else
+        load_preview(current_preview, entry, true)
+      end
     end
     picker = telescope.pickers.new(options, {
       prompt_title = "Pipeline #" .. pipeline.id .. " jobs",
       results_title = "Select: browser"
         .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or "")
-        .. (keymaps.pipeline_back and " · " .. keymaps.pipeline_back .. ": pipelines" or ""),
+        .. (keymaps.pipeline_back and " · " .. keymaps.pipeline_back .. ": pipelines" or "")
+        .. (keymaps.pipeline_refresh and " · " .. keymaps.pipeline_refresh .. ": refresh log" or ""),
       finder = telescope.finders.new_table({
         results = grouped_jobs(pipeline.jobs),
         entry_maker = function(item)
@@ -457,28 +525,18 @@ function M.pipelines(session, pipelines)
       on_complete = { job_group_headings },
       previewer = telescope.previewers.new_buffer_previewer({
         title = "Job log",
-        define_preview = function(self, entry)
-          local buf, job = self.state.bufnr, entry.value
-          selected, generation = job, generation + 1
-          local request = generation
-          local function wanted()
-            return picker_open() and selected == job and generation == request
-              and picker:get_selection() == entry and self.state and self.state.bufnr == buf
-          end
-          local lines, highlights = job_preview({ job = job })
-          preview_buffer(buf, lines, highlights, "review-job-log")
-          if self.state.winid and vim.api.nvim_win_is_valid(self.state.winid) then
-            vim.api.nvim_win_set_cursor(self.state.winid, { 1, 0 })
-          end
-          job_details(job, function(value)
-            if not wanted() then return end
-            local lines, highlights = job_preview(value)
-            preview_buffer(buf, lines, highlights, "review-job-log")
-          end, wanted)
-        end,
+        define_preview = function(self, entry) load_preview(self, entry, false) end,
+        teardown = function() if prompt then job_previews[prompt] = nil end end,
       }),
       attach_mappings = function(prompt_bufnr, map)
         prompt = prompt_bufnr
+        job_previews[prompt] = {
+          session = session, valid = picker_open, refresh = refresh,
+          contains = function(buf)
+            return buf == prompt or buf == picker.results_bufnr
+              or (current_preview and current_preview.state and buf == current_preview.state.bufnr)
+          end,
+        }
         local function open()
           local entry = telescope.action_state.get_selected_entry()
           if entry and session_open() then open_browser(entry.value) end
@@ -486,6 +544,7 @@ function M.pipelines(session, pipelines)
         replace_selection(open)
         for _, mode in ipairs({ "i", "n" }) do
           if keymaps.pipeline_open then map(mode, keymaps.pipeline_open, open) end
+          if keymaps.pipeline_refresh then map(mode, keymaps.pipeline_refresh, refresh) end
           if keymaps.pipeline_back then
             map(mode, keymaps.pipeline_back, function()
               telescope.actions.close(prompt_bufnr)

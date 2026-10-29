@@ -13,7 +13,7 @@ local defaults = {
     panel_toggle = false, panel_expand = false, panel_collapse = false,
     panel_collapse_all = false, panel_expand_all = false,
     close_document = false, select_comment = false, save_draft = false,
-    pipeline_open = false, pipeline_back = false,
+    pipeline_open = false, pipeline_back = false, pipeline_refresh = false,
   },
   clone_protocol = "ssh",
   repo = nil,
@@ -144,6 +144,14 @@ function M.pipelines()
   M.session:show_pipelines()
 end
 
+function M.refresh_job()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  require("review.telescope").refresh_job(M.session)
+end
+
 function M.help()
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
@@ -230,6 +238,8 @@ function M._commands()
     { desc = "Search review commands and configured mappings in Telescope" })
   vim.api.nvim_create_user_command("ReviewPipelines", M.pipelines,
     { desc = "Browse GitLab MR pipelines, grouped jobs and job logs in Telescope" })
+  vim.api.nvim_create_user_command("ReviewJobRefresh", M.refresh_job,
+    { desc = "Reload the selected job's metadata and log without using cached results" })
   vim.api.nvim_create_user_command("ReviewFiles", function(args) M.files(args.args) end,
     { nargs = "*", desc = "Filter changed files in the review panel" })
   vim.api.nvim_create_user_command("ReviewFilesClear", M.clear_files,

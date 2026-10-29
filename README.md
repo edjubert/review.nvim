@@ -181,6 +181,7 @@ merge base.
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewHelp` | Search commands, configured mappings and their context in Telescope |
 | `:ReviewPipelines` | Browse the GitLab MR's pipelines and jobs in Telescope |
+| `:ReviewJobRefresh` | Reload the selected job's metadata and log in its Telescope picker |
 | `:ReviewFiles [query]` | Focus the sidebar's live file filter, or apply a query |
 | `:ReviewFilesClear` | Clear the sidebar filter and restore its directory folds |
 | `:ReviewFilesPicker` | Search the current comparison's changed files in Telescope |
@@ -264,6 +265,7 @@ require("review").setup({
     -- Extra pipeline picker shortcuts, insert/normal mode.
     pipeline_open = "<C-o>",
     pipeline_back = "<C-b>",
+    pipeline_refresh = "<C-r>",
   },
 })
 ```
@@ -502,6 +504,7 @@ to change these colors and stage headings.
 | Jobs | Telescope's selection action | Open the selected job in GitLab |
 | Pipelines or jobs | Optional `keymaps.pipeline_open` | Open the selected pipeline or job in GitLab |
 | Jobs | Optional `keymaps.pipeline_back` | Return to the pipeline list |
+| Jobs | `:ReviewJobRefresh` or optional `keymaps.pipeline_refresh` (`<C-r>` in the example) | Reload the selected job's metadata and log, bypassing the cache |
 
 Telescope's selection variants (default, split, tab and drop) all perform the
 picker action above. Custom selection bindings are supported; pipeline and job
@@ -516,7 +519,8 @@ Highlight a job to load its log asynchronously in the preview. Above the log,
 the header shows its name, ID, status, stage, triggering user, ref, commit,
 creation/start/finish dates, execution and queue durations, runner, failure
 policy and failure reason when available. Use Telescope's usual search and
-preview scrolling keys.
+preview scrolling keys. Once loaded, the preview scrolls to the end of the log;
+scroll upward to read earlier output or its metadata header.
 
 ![Failed GitLab integration checks job showing its stage, duration, queue time, script_failure reason, demo-runner and allowed failure policy](assets/screenshots/pipeline-job.png)
 
@@ -533,11 +537,19 @@ Each command invocation fetches a fresh list; details are cached only while
 browsing that list. Completed job previews are reused; reselecting a job that
 has not finished reloads its details and log after a three-second cache interval.
 Logs do not poll in the background. Late responses never replace another job's
-preview or update a closed picker.
+preview or update a closed picker. Run `:ReviewJobRefresh` from the jobs picker
+or its preview to reload the selected job's details and log immediately, including
+completed jobs. The optional example uses `<C-r>` in normal and insert mode.
+An already pending load is kept instead of starting a duplicate request.
+After refreshing, the preview scrolls to the latest output.
 
-Logs are displayed as plain text, with terminal control sequences and GitLab
-section markers removed. Very long logs show their tail, limited to 5,000 lines
-and 512 KiB, with a truncation notice. The browser link opens the full log.
+Logs keep their ANSI foreground/background colors (16-color, 256-color and RGB),
+bold, italic, underline, inverse and strikethrough styling. The first 16 colors
+use Neovim's `terminal_color_0` through `terminal_color_15` when configured.
+Other terminal control sequences and GitLab section markers are removed.
+The preview remains an ordinary read-only buffer. Very long logs show their tail,
+limited to 5,000 lines and 512 KiB, with a truncation notice. The browser link opens
+the full log.
 Empty, erased or inaccessible logs show a message while retaining job metadata.
 Downstream triggers show their downstream pipeline metadata and link, since
 they have no job trace.

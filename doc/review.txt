@@ -116,7 +116,11 @@ COMMANDS
     Highlight a job to load its log asynchronously. Its metadata appears
     above the log: name, ID, status, stage, user, dates, duration, queue time,
     runner, ref/commit and failure information when available.
-    Logs have terminal control sequences and GitLab section markers removed.
+    Logs retain ANSI foreground/background colors (16-color, 256-color, RGB)
+    and bold/italic/underline/inverse/strikethrough styling. The first 16
+    colors use g:terminal_color_0 through g:terminal_color_15 when configured.
+    Other terminal controls and GitLab section markers are removed.
+    The preview scrolls to the end after loading; scroll up for its header.
     Long previews show the last 5,000 lines / 512 KiB with a truncation notice.
     Missing, erased or inaccessible logs display a message. Downstream
     triggers show downstream pipeline metadata instead of a job log.
@@ -130,6 +134,14 @@ COMMANDS
     these picker actions; provider entries are not opened as local files.
     Requires telescope.nvim and plenary.nvim. GitHub and Codeberg pipeline
     details are not implemented. All requests are read-only.
+
+:ReviewJobRefresh                                        *:ReviewJobRefresh*
+    Reload the selected job's metadata and log from its Telescope picker
+    or preview. Bypass cached results, even for a completed job, and scroll
+    to the latest output. An already pending load is not duplicated.
+    Enable keymaps.pipeline_refresh for a shortcut in normal/insert mode;
+    the optional README example uses <C-r>. It defaults to false.
+    All requests are read-only; this command does not rerun the CI job.
 
 :ReviewToggleComments                                *:ReviewToggleComments*
     Show or hide discussion messages and replies below their diff lines.

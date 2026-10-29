@@ -298,6 +298,8 @@ function M.help(session)
     add(":ReviewPipelines", false, "Browse GitLab pipelines, grouped jobs and job logs in Telescope")
     add("Open pipeline/job URL", "pipeline_open", "Open the selected pipeline or job in the browser", "Pipeline / jobs picker")
     add("Return to pipelines", "pipeline_back", "Return from the jobs picker to its pipelines", "Jobs picker")
+    add(":ReviewJobRefresh", "pipeline_refresh", "Reload the selected job's metadata and colored log; show the end",
+      "Jobs picker; command also works in the job preview")
   end
   if session.provider.resolve then
     add(":ReviewResolve", false, "Resolve the selected conversation immediately", "Diff / discussion window")

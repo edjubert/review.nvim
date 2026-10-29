@@ -166,7 +166,7 @@ local function reset()
       panel_toggle = "za", panel_expand = "zo", panel_collapse = "zc",
       panel_collapse_all = "zM", panel_expand_all = "zR",
       close_document = "q", select_comment = "<CR>", save_draft = "<C-s>",
-      pipeline_open = "<C-o>", pipeline_back = "<C-b>",
+      pipeline_open = "<C-o>", pipeline_back = "<C-b>", pipeline_refresh = "<C-r>",
     },
   }))
   review.open(fixture.url)
