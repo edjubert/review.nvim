@@ -8,7 +8,11 @@ Read GitLab merge requests and GitHub or Codeberg pull requests commit by commit
 view each file as an inline diff, and draft comments on a line or a line range
 in Neovim.
 
-![Complete pull request with the commit panel, inline Lua diff and local draft markers](assets/screenshots/overview.png)
+![Complete GitLab merge request with the sidebar filter, folded directories, two viewed files, pipeline status, reviewer decisions and local draft markers](assets/screenshots/overview.png)
+
+The tree groups changed files by directory. The sidebar shows the running
+pipeline, reviewer decisions and two of five files viewed. `:ReviewViewed` and
+`:ReviewUnviewed` update the local progress shown in the panel and diff title.
 
 - Open a GitLab MR, GitHub PR or Codeberg PR URL, including commit/file subpages.
 - Browse the exact commit list, oldest first.
@@ -16,7 +20,7 @@ in Neovim.
 - Switch between individual commits and the complete MR/PR.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
-- Search the current comparison's changed files in Telescope from the panel.
+- Filter changed files directly in the sidebar, or search them in Telescope.
 - Browse changed files in a directory tree with collapsible folders.
 - Mark files viewed or unviewed and keep local progress between sessions.
 - See emoji reactions and counts on comments and replies.
@@ -27,6 +31,7 @@ in Neovim.
   or Codeberg.
 - See the latest pipeline/check status and reviewer decisions in the panel.
 - Browse GitLab MR pipelines and their jobs in Telescope.
+- Search review commands and configured shortcuts in Telescope.
 - Approve the open MR/PR or request changes with explicit commands.
 - Resolve a GitLab conversation, or confirm resolving all open MR conversations.
 - Open the discussion under the cursor or browse all review discussions.
@@ -39,9 +44,11 @@ The URL selects the provider automatically. GitLab, self-hosted GitLab, GitHub,
 GitHub Enterprise Server and Codeberg use the same UI and shortcuts.
 Provider code lives in `lua/review/providers/`.
 
-The screenshots use a demo GitHub pull request; the discussion is simulated
-locally. Colors, Markdown rendering and selection menus come from the user's
-Neovim configuration.
+The screenshots combine a demo GitHub pull request with a fully simulated GitLab
+merge request. Discussions and GitLab pipelines, decisions and resolutions use
+local fixtures. Colors, Markdown rendering and selection menus come from the
+user's Neovim configuration. The [screenshot demo guide](scripts/screenshots/README.md)
+explains how to reproduce the GitLab scenes without connecting to GitLab.
 
 ## Requirements
 
@@ -54,7 +61,8 @@ Neovim configuration.
   for private repositories or publication.
 - Git access to the repository (SSH by default).
 - Optional: [`telescope.nvim`](https://github.com/nvim-telescope/telescope.nvim)
-  and its `plenary.nvim` dependency for `:ReviewPipelines` and `:ReviewFilesPicker`.
+  and its `plenary.nvim` dependency for `:ReviewHelp`, `:ReviewPipelines`
+  and `:ReviewFilesPicker`.
   The sidebar's file filter works without Telescope.
 
 ### Authentication
@@ -115,7 +123,7 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewPipelines", "ReviewFiles", "ReviewFilesClear", "ReviewFilesPicker",
+    "Review", "ReviewInfo", "ReviewHelp", "ReviewPipelines", "ReviewFiles", "ReviewFilesClear", "ReviewFilesPicker",
     "ReviewNextCommit", "ReviewPrevCommit", "ReviewNextFile", "ReviewPrevFile",
     "ReviewNextChange", "ReviewPrevChange", "ReviewComplete", "ReviewPanel",
     "ReviewViewed", "ReviewUnviewed", "ReviewToggleViewed",
@@ -171,6 +179,7 @@ merge base.
 | `:ReviewComplete` | Show the complete MR/PR comparison |
 | `:ReviewPanel <action>` | Open or fold the selected panel entry |
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
+| `:ReviewHelp` | Search commands, configured mappings and their context in Telescope |
 | `:ReviewPipelines` | Browse the GitLab MR's pipelines and jobs in Telescope |
 | `:ReviewFiles [query]` | Focus the sidebar's live file filter, or apply a query |
 | `:ReviewFilesClear` | Clear the sidebar filter and restore its directory folds |
@@ -223,6 +232,7 @@ require("review").setup({
     submit = "<leader>rs",
     refresh = "<leader>rr",
     info = "<leader>ri",
+    help = "<leader>r?",
     toggle_comments = "<leader>rt",
     toggle_viewed = "<leader>rv",
     files_picker = "<leader>rF",
@@ -280,6 +290,7 @@ With that example enabled:
 | `<leader>rs` in the panel or diff | Preview drafts and choose whether to publish |
 | `<leader>rr` in the panel or diff | Refresh the review |
 | `<leader>ri` in the panel or diff | Show the MR/PR title and description |
+| `<leader>r?` in the panel or diff | Open review help in Telescope |
 | `<leader>rt` in the panel or diff | Toggle inline discussion messages and replies |
 | `<leader>rd` | Local drafts |
 | `<leader>rl` in the diff | Open discussions attached to the cursor line or range |
@@ -287,10 +298,26 @@ With that example enabled:
 | `q` | Close the review tab |
 
 The panel uses your colorscheme for commits, directories and Git file statuses.
-Hints stay at the bottom in a muted color and reflect your configured shortcuts.
-When a shortcut is disabled, the hint shows its command instead.
 Highlight groups such as `ReviewHelp`, `ReviewFilterBorder`, `ReviewFilterPrompt`, `ReviewDirectory`, `ReviewFileAdded`,
 `ReviewFileModified` and `ReviewFileDeleted` can be customized.
+
+### Search review help
+
+Run `:ReviewHelp` in an open review to browse commands and their configured
+shortcuts in Telescope. Search by command, key, action or context. The preview
+shows where an action applies; disabled mappings are shown as unconfigured.
+GitLab pipeline and resolution commands appear for providers supporting them.
+
+The optional example above binds `<leader>r?` through `keymaps.help`.
+It defaults to `false`, like every other plugin mapping.
+The sidebar contains the review information and tree; shortcut hints are shown
+in this picker. Selecting a help entry closes the picker without executing
+its action.
+
+This command requires `telescope.nvim` and `plenary.nvim`.
+The built-in `:help review.nvim` documentation is also available.
+
+### Navigation
 
 With the example mappings, `3]h` jumps forward three change blocks.
 `:3ReviewNextChange` also works without mappings. A replacement's removed and
@@ -324,10 +351,20 @@ the displayed file shows `◀`.
 
 ### File filter in the sidebar
 
-A search field stays at the top of the panel, above the commit/file tree.
+A search field sits below the MR/PR title, statuses and viewed progress,
+immediately above the commit/file tree.
 Its counter shows matching files / total files in the current Git comparison.
 Run `:ReviewFiles` to focus it and type: the tree updates as you edit the query.
-The diff stays open while filtering.
+The diff stays open while filtering. The field follows its position above the
+tree while scrolling, staying at the top once the review information scrolls
+out of view.
+
+![Sidebar file filter with query in, two of five files matched, directory groups and local viewed markers](assets/screenshots/file-search.png)
+
+The query `in` keeps the source and test inbox files visible with their parent
+directories, Git statuses and local viewed markers.
+The screenshots retain the earlier placement of the field at the panel's top
+and the shortcut list at the bottom; current shortcuts appear in `:ReviewHelp`.
 
 Matching is case-insensitive and uses literal path fragments. All terms separated
 by whitespace must match the new or old path, including renamed files.
@@ -450,6 +487,11 @@ preview status fields and job lines use these colors:
 | Running / preparing | Blue |
 | Created / manual / skipped / canceled / unknown | Grey |
 
+![GitLab pipeline picker with three pipelines and a preview grouping eight jobs under four stage headings with five status colors](assets/screenshots/pipelines.png)
+
+`:ReviewPipelines` previews the selected pipeline's jobs beneath their stage
+headings, with colors reflecting each job's status.
+
 Customize `ReviewPipelineSuccess`, `ReviewPipelineError`, `ReviewPipelinePending`,
 `ReviewPipelineRunning`, `ReviewPipelineInactive` and `ReviewPipelineStage`
 to change these colors and stage headings.
@@ -464,6 +506,11 @@ to change these colors and stage headings.
 The jobs picker previews timings, runner, failure policy, failure reason and
 downstream pipeline metadata. Use Telescope's usual search and preview scrolling
 keys. Job logs remain available through the browser link.
+
+![Failed GitLab integration checks job showing its stage, duration, queue time, script_failure reason, demo-runner and allowed failure policy](assets/screenshots/pipeline-job.png)
+
+Selecting a pipeline opens its jobs picker. The preview here shows the failed
+`integration checks` job and its timings, runner and failure policy.
 
 The command requires `telescope.nvim` and `plenary.nvim`; the rest of the plugin
 works without them. With lazy.nvim, you can add
@@ -514,7 +561,7 @@ only, or publish them **and request changes**. The combined action requests chan
 only after every comment has been confirmed. If a comment fails, the change
 request is not sent and the remaining drafts stay local.
 
-![Submission preview with the explicit Keep local or Publish confirmation](assets/screenshots/submission-preview.png)
+![Submission preview with Keep local, Publish and Publish with request changes choices](assets/screenshots/submission-preview.png)
 
 ### Approve or request changes
 
@@ -525,6 +572,11 @@ Run `:ReviewRequestChanges` to request changes without publishing local drafts.
 The command asks for confirmation; GitHub and Codeberg also require a review
 summary. This action updates the remote review decision and does not push Git
 commits. The combined `:ReviewSubmit` action asks for the same summary when needed.
+
+![GitLab request changes confirmation with Cancel selected and a reminder that local drafts stay local](assets/screenshots/request-changes.png)
+
+`:ReviewRequestChanges` confirms the standalone decision while preserving local
+drafts. The simulated MR also shows each reviewer's decision in the sidebar.
 
 Both actions check that the loaded review revision is still current. If it
 changed, run `:ReviewRefresh` and inspect the new diff first. GitLab uses the
@@ -554,7 +606,10 @@ offline. Unknown shortcodes, escaped shortcodes, Markdown code spans and fenced
 code blocks stay literal. Draft editing and submission previews keep the
 original text.
 
-![Discussion window with two participants and a comment anchored to a line range](assets/screenshots/discussion.png)
+![Resolved GitLab discussion anchored to a line range, with two participants, reaction counts and the users who reacted](assets/screenshots/discussion.png)
+
+The simulated conversation shows its resolved state and each message's emoji
+reactions, including the users behind those reactions.
 
 In the discussion window:
 
@@ -617,6 +672,11 @@ dialog shows the count and MR number; **Cancel** is the first/default choice.
 Confirm explicitly to continue. Newly created conversations after the warning
 are not included.
 
+![Resolve all confirmation warning for two GitLab conversations including outdated ones, with Cancel and Resolve all choices](assets/screenshots/resolve-all.png)
+
+`:ReviewResolveAll` shows the count and warns that marking conversations resolved
+does not verify that their feedback was addressed.
+
 Both commands use GitLab's native discussion resolution API and require the
 corresponding permission. They check the MR revision and reread each conversation
 before writing. New or edited comments stop resolution so you can refresh and
@@ -634,6 +694,11 @@ Run `:ReviewToggleComments` to show or hide discussions
 directly below their commented lines. A range discussion appears below its last
 line, with the author, message and replies. Multiple discussions on the same line
 appear together.
+
+![GitLab discussions displayed beneath their diff ranges, including a resolved discussion, a comment and author reply with emoji reaction counts](assets/screenshots/inline-comments.png)
+
+`:ReviewToggleComments` shows the discussion beneath its diff anchor. With the
+optional mapping example above, `<leader>rt` toggles this display.
 
 Messages use virtual lines, leaving the diff content and comment positions
 unchanged. Long lines wrap to the diff window's width. Markdown is displayed as
@@ -732,7 +797,7 @@ require("review").setup({
 - Commit diffs compare against the first parent. Root commits are not supported.
 - Pipeline/check status, approval and change requests on all providers.
 - Live file filtering in the sidebar on all providers, without a picker dependency.
-- GitLab pipeline/job details and a separate file picker via optional Telescope.
+- Command help, GitLab pipeline/job details and a separate file picker via optional Telescope.
 - Local viewed/unviewed progress on all providers, scoped to each Git comparison.
 - Discussion reading and new comments on all providers; replies on GitLab and
   GitHub. Conversation resolution on GitLab. Codeberg reply drafts and GitHub/
