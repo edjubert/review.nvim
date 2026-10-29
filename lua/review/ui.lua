@@ -3,6 +3,7 @@ local emoji = require("review.emoji")
 local status = require("review.status")
 local reactions = require("review.reactions")
 local viewed = require("review.viewed")
+local tree = require("review.tree")
 local M = {}
 local namespace = vim.api.nvim_create_namespace("review")
 local comment_namespace = vim.api.nvim_create_namespace("review.comments")
@@ -199,6 +200,7 @@ function M.create(session)
   vim.wo[session.panel_win].relativenumber = false
   vim.wo[session.panel_win].wrap = false
   vim.wo[session.panel_win].signcolumn = "no"
+  vim.wo[session.panel_win].foldenable = false
   vim.wo[session.panel_win].winfixwidth = true
   vim.wo[session.panel_win].cursorline = true
   session.ui_group = vim.api.nvim_create_augroup("ReviewUI" .. serial, { clear = true })
@@ -221,13 +223,14 @@ function M.create(session)
     vim.keymap.set("n", search_files_key, function() session:search_files() end,
       { buffer = session.panel_buf, silent = true, desc = "Search changed files in Telescope" })
   end
-  vim.keymap.set("n", "<CR>", function()
-    local entry = session.panel_entries[vim.api.nvim_win_get_cursor(session.panel_win)[1]]
-    if entry then
-      if entry.file then session:select_file(entry.file)
-      else session:select_commit(entry.commit) end
-    end
-  end, { buffer = session.panel_buf, silent = true })
+  local tree_actions = {
+    ["<CR>"] = "open", h = "left", l = "right",
+    za = "toggle", zo = "expand", zc = "collapse", zM = "collapse_all", zR = "expand_all",
+  }
+  for key, action in pairs(tree_actions) do
+    vim.keymap.set("n", key, function() M.panel_action(session, action) end,
+      { buffer = session.panel_buf, silent = true, desc = "Review tree: " .. action })
+  end
   local comment_key = M.comment_key(session)
   if comment_key then
     vim.keymap.set({ "n", "x" }, comment_key, function()
@@ -255,9 +258,9 @@ end
 
 local function footer_hints(session)
   local hints = {
-    " Enter open · gA complete " .. session.provider.kind,
+    " Enter open/fold · h/l tree · gA all",
     " " .. (M.comment_key(session) or ":ReviewComment") .. " comment line/range",
-    " ]c/[c commits · ]f/[f files",
+    " ]c/[c commits · ]f/[f files · zM/zR folds",
     " " .. (M.search_files_key(session) or ":ReviewFiles") .. " search files (Telescope)",
     " " .. (M.toggle_viewed_key(session) or ":ReviewToggleViewed") .. " toggle viewed",
     " ]h/[h next/previous change",
@@ -318,6 +321,104 @@ function M.close(session)
   end
 end
 
+local function directory_folds(session)
+  session.directory_folds = session.directory_folds or {}
+  local comparison = (session.base or "") .. ":" .. (session.head or "")
+  session.directory_folds[comparison] = session.directory_folds[comparison] or {}
+  return session.directory_folds[comparison]
+end
+
+local function file_tree(session)
+  if not session.file_tree or session.file_tree.source ~= session.files then
+    session.file_tree = tree.build(session.files or {})
+  end
+  return session.file_tree
+end
+
+function M.reveal_file(session, file)
+  local folds = directory_folds(session)
+  for _, path in ipairs(tree.parents(file.new_path)) do folds[path] = nil end
+end
+
+function M.focus_panel_entry(session, wanted)
+  if not session.panel_win or not vim.api.nvim_win_is_valid(session.panel_win) then return false end
+  for row, item in pairs(session.panel_entries or {}) do
+    if (wanted.file and item.file == wanted.file)
+        or (wanted.directory and item.directory == wanted.directory)
+        or (wanted.commit ~= nil and item.commit == wanted.commit) then
+      vim.api.nvim_win_set_cursor(session.panel_win, { row, 0 })
+      return true
+    end
+  end
+  return false
+end
+
+local function restore_panel_entry(session, item)
+  if not item or M.focus_panel_entry(session, item) then return end
+  local file = item.file and session.files[item.file]
+  local path = item.directory or (file and file.new_path)
+  local parents = path and tree.parents(path) or {}
+  for index = #parents, 1, -1 do
+    if M.focus_panel_entry(session, { directory = parents[index] }) then return end
+  end
+  M.focus_panel_entry(session, { commit = session.commit_index })
+end
+
+function M.panel_action(session, action)
+  if not M.valid(session) or not vim.api.nvim_win_is_valid(session.panel_win) then return end
+  local row = vim.api.nvim_win_get_cursor(session.panel_win)[1]
+  local item = (session.panel_entries or {})[row]
+  if not session.files or #session.files == 0 then
+    if item and item.commit ~= nil and (action == "open" or action == "right") then
+      session:select_commit(item.commit)
+    end
+    return
+  end
+  local folds = directory_folds(session)
+  if action == "collapse_all" or action == "expand_all" then
+    for path in pairs(folds) do folds[path] = nil end
+    if action == "collapse_all" then
+      local function collapse(node)
+        for _, child in ipairs(node.children) do
+          if child.directory then folds[child.directory] = true; collapse(child) end
+        end
+      end
+      collapse(file_tree(session))
+    end
+    M.panel(session)
+    restore_panel_entry(session, item)
+    return
+  end
+  if not item then return end
+  local path = item.directory
+  if action == "left" then
+    if not path or folds[path] then
+      if item.parent and item.parent ~= "" then M.focus_panel_entry(session, { directory = item.parent })
+      elseif item.parent == "" then M.focus_panel_entry(session, { commit = session.commit_index }) end
+      return
+    end
+    action = "collapse"
+  elseif action == "right" and path and not folds[path] then
+    local child = (session.panel_entries or {})[row + 1]
+    if child and child.parent == path then vim.api.nvim_win_set_cursor(session.panel_win, { row + 1, 0 }) end
+    return
+  end
+  if path then
+    if action == "expand" or action == "right" then folds[path] = nil
+    elseif action == "collapse" then folds[path] = true
+    else folds[path] = not folds[path] or nil end
+    M.panel(session)
+    M.focus_panel_entry(session, { directory = path })
+  elseif action == "open" or action == "right" then
+    if item.file then session:select_file(item.file)
+    elseif item.commit ~= nil then session:select_commit(item.commit) end
+  elseif (action == "collapse" or action == "toggle") and item.parent and item.parent ~= "" then
+    folds[item.parent] = true
+    M.panel(session)
+    M.focus_panel_entry(session, { directory = item.parent })
+  end
+end
+
 function M.panel(session)
   if not M.valid(session) or not vim.api.nvim_buf_is_valid(session.panel_buf) then return end
   local lines = {
@@ -371,16 +472,31 @@ function M.panel(session)
       A = "ReviewFileAdded", M = "ReviewFileModified", D = "ReviewFileDeleted",
       R = "ReviewFileRenamed", C = "ReviewFileAdded",
     }
-    for index, file in ipairs(session.files or {}) do
-      local marked = viewed.is(session.viewed, session.base, session.head, file)
-      local marker = session.viewed_error and "[?]" or marked and "[x]" or "[ ]"
-      entry(("    %s %s %s%s"):format(marker, file.status, file.new_path,
-        session.file_index == index and " ◀" or ""), { file = index },
-        status_groups[file.status] or "ReviewFile", session.file_index == index)
-      highlight(#lines, 4, 7, marked and "ReviewFileViewed" or "ReviewHelp")
-      local directory = file.new_path:match("^(.*/)")
-      if directory then highlight(#lines, 10, 10 + #directory, "ReviewDirectory") end
+    local folds = directory_folds(session)
+    local selected = session.files and session.files[session.file_index or 0]
+    local function children(parent, depth)
+      for _, node in ipairs(parent.children) do
+        local indent = (" "):rep(4 + depth * 2)
+        local name = node.name:gsub("%c", " ")
+        if node.directory then
+          local closed = folds[node.directory] == true
+          local prefix = node.directory .. "/"
+          local contains_selected = closed and selected and selected.new_path:sub(1, #prefix) == prefix
+          entry(indent .. (closed and "▸ " or "▾ ") .. name .. "/" .. (contains_selected and " ◀" or ""),
+            { directory = node.directory, parent = node.parent }, "ReviewDirectory", contains_selected)
+          if not closed then children(node, depth + 1) end
+        else
+          local file = session.files[node.file]
+          local marked = viewed.is(session.viewed, session.base, session.head, file)
+          local marker = session.viewed_error and "[?]" or marked and "[x]" or "[ ]"
+          entry(("%s%s %s %s%s"):format(indent, marker, file.status, name,
+            session.file_index == node.file and " ◀" or ""), { file = node.file, parent = node.parent },
+            status_groups[file.status] or "ReviewFile", session.file_index == node.file)
+          highlight(#lines, #indent, #indent + 3, marked and "ReviewFileViewed" or "ReviewHelp")
+        end
+      end
     end
+    children(file_tree(session), 0)
     if session.files and #session.files == 0 then lines[#lines + 1] = "    No changed files" end
   end
   entry((session.commit_index == 0 and "▾ " or "▸ ") .. "Complete " .. session.provider.label,

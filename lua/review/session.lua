@@ -20,6 +20,7 @@ function Session.new(target, config)
     provider = providers.for_target(target),
     inline_comments = config.inline_comments == true,
     thread_documents = {}, thread_views = {},
+    directory_folds = {},
     commit_index = 0, files = {}, closed = false, generation = 0,
   }, Session)
   self:reload_viewed()
@@ -185,8 +186,10 @@ function Session:select_file(index, selection)
   self.generation = self.generation + 1
   local generation, base, head = self.generation, self.base, self.head
   self.file_index, self.current = index, nil
+  ui.reveal_file(self, file)
   ui.empty(self, "Loading " .. file.new_path .. "…")
   ui.panel(self)
+  ui.focus_panel_entry(self, { file = index })
   self:task(function()
     local old = file.new_file and "" or git.content(self.repo, base, file.old_path)
     local new = file.deleted_file and "" or git.content(self.repo, head, file.new_path)

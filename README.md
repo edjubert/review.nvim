@@ -17,6 +17,7 @@ in Neovim.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
 - Search the current comparison's changed files in Telescope from the panel.
+- Browse changed files in a directory tree with collapsible folders.
 - Mark files viewed or unviewed and keep local progress between sessions.
 - See emoji reactions and counts on comments and replies.
 - Select deleted lines as well as added lines.
@@ -187,7 +188,10 @@ merge base.
 
 | Mapping | Action |
 | --- | --- |
-| `Enter` in the panel | Open a commit or file |
+| `Enter` in the panel | Open a commit/file or toggle a directory |
+| `h` / `l` in the panel | Collapse / expand directories or move to parent / first child |
+| `za` / `zo` / `zc` in the panel | Toggle / expand / collapse a directory |
+| `zM` / `zR` in the panel | Collapse / expand all directories |
 | `/` in the panel | Search changed files in Telescope |
 | `<leader>rv` in the panel or diff | Toggle the file's local viewed marker |
 | `]c` / `[c` | Next / previous commit |
@@ -216,6 +220,24 @@ Highlight groups such as `ReviewHelp`, `ReviewDirectory`, `ReviewFileAdded`,
 form one block; navigation stays within the current file. Use `]f` for the next file.
 Opening a file automatically places the cursor on its first change block,
 opens any folds covering that line, and centers the diff view there.
+
+### Directory tree
+
+Changed files are grouped in nested, collapsible directories in the panel.
+Directories appear first, then files, alphabetically within each level.
+File rows show the basename, Git status and viewed marker; the full path remains
+visible in the diff title and `:ReviewFiles`.
+
+Press `Enter` on a directory to toggle it. `l` expands a closed directory or moves
+to its first child; on a file, it opens the diff. `h` closes an expanded directory
+or moves to the parent. `za`, `zo` and `zc` also toggle, expand and close directories.
+Use `zM` to collapse all directories and `zR` to expand them.
+
+Directories start expanded. Their fold state is retained during the session for
+each Git comparison, including when refreshing or switching between comparisons.
+Selecting a file through search, `]f` / `[f` or a discussion jump expands its
+parent directories and reveals it in the panel. A collapsed directory containing
+the displayed file shows `◀`.
 
 ### File search
 
