@@ -126,6 +126,8 @@ COMMANDS
     Telescope's selection action on a job opens it in GitLab. Enable
     keymaps.pipeline_open for an additional browser shortcut, and
     keymaps.pipeline_back to return from jobs to the pipeline list.
+    All Telescope selection variants, including split, tab and drop, use
+    these picker actions; provider entries are not opened as local files.
     Requires telescope.nvim and plenary.nvim. GitHub and Codeberg pipeline
     details are not implemented. All requests are read-only.
 

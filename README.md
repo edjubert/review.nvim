@@ -503,6 +503,10 @@ to change these colors and stage headings.
 | Pipelines or jobs | Optional `keymaps.pipeline_open` | Open the selected pipeline or job in GitLab |
 | Jobs | Optional `keymaps.pipeline_back` | Return to the pipeline list |
 
+Telescope's selection variants (default, split, tab and drop) all perform the
+picker action above. Custom selection bindings are supported; pipeline and job
+entries are never treated as local file paths.
+
 Selecting a pipeline opens a searchable jobs picker with non-selectable stage
 headings. Stages follow their first occurrence in the pipeline's job list; jobs
 are sorted by name within each stage. Searching filters jobs without rearranging

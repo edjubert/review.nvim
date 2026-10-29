@@ -19,6 +19,7 @@ function M.available(command)
       previewers = require("telescope.previewers"),
       config = require("telescope.config").values,
       actions = require("telescope.actions"),
+      action_set = require("telescope.actions.set"),
       action_state = require("telescope.actions.state"),
       display = require("telescope.pickers.entry_display"),
     }
@@ -26,6 +27,13 @@ function M.available(command)
   if ok then telescope = modules; return true end
   notify(":" .. (command or "ReviewPipelines") .. " requires telescope.nvim and plenary.nvim.", vim.log.levels.WARN)
   return false
+end
+
+local function replace_selection(callback)
+  -- Review entries are provider objects, not files. Handle every selection
+  -- variant (including tab/drop and direct file actions) through the picker.
+  telescope.action_set.select:replace(callback)
+  telescope.action_set.edit:replace(callback)
 end
 
 local function text(value)
@@ -475,7 +483,7 @@ function M.pipelines(session, pipelines)
           local entry = telescope.action_state.get_selected_entry()
           if entry and session_open() then open_browser(entry.value) end
         end
-        telescope.actions.select_default:replace(open)
+        replace_selection(open)
         for _, mode in ipairs({ "i", "n" }) do
           if keymaps.pipeline_open then map(mode, keymaps.pipeline_open, open) end
           if keymaps.pipeline_back then
@@ -534,7 +542,7 @@ function M.pipelines(session, pipelines)
       }),
       attach_mappings = function(prompt_bufnr, map)
         prompt = prompt_bufnr
-        telescope.actions.select_default:replace(function()
+        replace_selection(function()
           local entry = telescope.action_state.get_selected_entry()
           if not entry or opening or not session_open() then return end
           opening = true
@@ -613,7 +621,7 @@ function M.help(entries)
       end,
     }),
     attach_mappings = function(prompt_bufnr)
-      telescope.actions.select_default:replace(function()
+      replace_selection(function()
         telescope.actions.close(prompt_bufnr)
       end)
       return true
@@ -653,7 +661,7 @@ function M.files(session)
     sorter = telescope.config.generic_sorter({}),
     previewer = false,
     attach_mappings = function(prompt_bufnr)
-      telescope.actions.select_default:replace(function()
+      replace_selection(function()
         local entry = telescope.action_state.get_selected_entry()
         if not entry then return end
         if not valid_selection() then
