@@ -45,26 +45,35 @@ function M.pages(target, endpoint)
   error("GitLab pagination exceeded 1000 pages; refusing an incomplete result.", 0)
 end
 
-function M.load(target)
-  local endpoint = M.mr_path(target)
-  local mr = M.request(target, endpoint)
+function M.info(target)
+  local mr = M.current(target)
   if type(mr.diff_refs) ~= "table"
       or type(mr.diff_refs.head_sha) ~= "string"
       or type(mr.diff_refs.base_sha) ~= "string"
       or type(mr.diff_refs.start_sha) ~= "string" then
     error("GitLab is still preparing the MR diff. Try again shortly.", 0)
   end
-  local commits = M.pages(target, endpoint .. "/commits")
+  return mr
+end
+
+function M.commits(target)
+  local commits = M.pages(target, M.mr_path(target) .. "/commits")
   -- GitLab returns newest first; browsing starts at the oldest commit.
   local ordered = {}
   for i = #commits, 1, -1 do ordered[#ordered + 1] = commits[i] end
-  return {
-    mr = mr,
-    commits = ordered,
-    project = M.request(target, M.project_path(target)),
-    diffs = M.pages(target, endpoint .. "/diffs"),
-    discussions = M.discussions(target),
-  }
+  return ordered
+end
+
+function M.project(target)
+  return M.request(target, M.project_path(target))
+end
+
+function M.diffs(target)
+  return M.pages(target, M.mr_path(target) .. "/diffs")
+end
+
+function M.load(target)
+  return require("review.providers").load(target)
 end
 
 function M.current(target)
@@ -175,49 +184,57 @@ function M.approve(target, refs)
   return M.request(target, M.mr_path(target) .. "/approve", { sha = refs.head_sha })
 end
 
-function M.status(target, mr)
+function M.pipeline_status(_, mr)
   local pipeline = type(mr.head_pipeline) == "table" and mr.head_pipeline or nil
   return {
-    pipeline = {
-      state = pipeline and status.pipeline({ pipeline.status or "unknown" }) or "none",
-      id = pipeline and type(pipeline.id) == "number" and pipeline.id or nil,
-      web_url = pipeline and type(pipeline.web_url) == "string" and pipeline.web_url or nil,
-    },
-    review = status.read(function()
-      local approvals = M.request(target, M.mr_path(target) .. "/approvals")
-      local reviewers, by_user = {}, {}
-      for _, reviewer in ipairs(M.pages(target, M.mr_path(target) .. "/reviewers")) do
-        local user = type(reviewer.user) == "table" and reviewer.user.username
-        if user then
-          local decision = {
-            username = user,
-            state = reviewer.state == "requested_changes" and "changes_requested"
-              or (type(reviewer.state) == "string" and reviewer.state or "unknown"),
-          }
-          reviewers[#reviewers + 1], by_user[user] = decision, decision
-        end
-      end
-      for _, entry in ipairs(approvals.approved_by or {}) do
-        local user = type(entry.user) == "table" and entry.user.username
-        if user then
-          if by_user[user] then
-            if by_user[user].state ~= "changes_requested" then by_user[user].state = "approved" end
-          else reviewers[#reviewers + 1] = { username = user, state = "approved" } end
-        end
-      end
-      table.sort(reviewers, function(a, b) return a.username < b.username end)
-      local state = approvals.approved == true and "approved" or "pending"
-      for _, reviewer in ipairs(reviewers) do
-        if reviewer.state == "changes_requested" then state = "changes_requested" end
-      end
-      if mr.detailed_merge_status == "requested_changes" then state = "changes_requested" end
-      return {
-        state = state, approvals = #(approvals.approved_by or {}),
-        required = type(approvals.approvals_required) == "number" and approvals.approvals_required or nil,
-        reviewers = reviewers,
-      }
-    end),
+    state = pipeline and status.pipeline({ pipeline.status or "unknown" }) or "none",
+    id = pipeline and type(pipeline.id) == "number" and pipeline.id or nil,
+    web_url = pipeline and type(pipeline.web_url) == "string" and pipeline.web_url or nil,
   }
+end
+
+function M.review_status(target, mr)
+  return status.read(function()
+    local approvals = M.request(target, M.mr_path(target) .. "/approvals")
+    local reviewers, by_user = {}, {}
+    for _, reviewer in ipairs(M.pages(target, M.mr_path(target) .. "/reviewers")) do
+      local user = type(reviewer.user) == "table" and reviewer.user.username
+      if user then
+        local decision = {
+          username = user,
+          state = reviewer.state == "requested_changes" and "changes_requested"
+            or (type(reviewer.state) == "string" and reviewer.state or "unknown"),
+        }
+        reviewers[#reviewers + 1], by_user[user] = decision, decision
+      end
+    end
+    for _, entry in ipairs(approvals.approved_by or {}) do
+      local user = type(entry.user) == "table" and entry.user.username
+      if user then
+        if by_user[user] then
+          if by_user[user].state ~= "changes_requested" then by_user[user].state = "approved" end
+        else reviewers[#reviewers + 1] = { username = user, state = "approved" } end
+      end
+    end
+    table.sort(reviewers, function(a, b) return a.username < b.username end)
+    local state = approvals.approved == true and "approved" or "pending"
+    for _, reviewer in ipairs(reviewers) do
+      if reviewer.state == "changes_requested" then state = "changes_requested" end
+    end
+    if mr.detailed_merge_status == "requested_changes" then state = "changes_requested" end
+    return {
+      state = state, approvals = #(approvals.approved_by or {}),
+      required = type(approvals.approvals_required) == "number" and approvals.approvals_required or nil,
+      reviewers = reviewers,
+    }
+  end)
+end
+
+function M.status(target, mr)
+  return async.all({
+    pipeline = function() return M.pipeline_status(target, mr) end,
+    review = function() return M.review_status(target, mr) end,
+  })
 end
 
 local function positive_id(value)

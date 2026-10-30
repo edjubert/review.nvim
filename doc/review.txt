@@ -7,6 +7,15 @@ review.nvim opens a GitLab MR, GitHub PR or Codeberg PR URL, lists its commits,
 and renders read-only inline diffs with selectable additions and deletions.
 Comment drafts are local until explicit publication.
 
+Information, commits, files, discussions and statuses load independently.
+The title and :ReviewInfo description are available as soon as metadata arrives.
+Diffs open after validating the complete file/commit lists and Git references,
+without waiting for comments or statuses. Pending sections display "loading…";
+late comments update the current diff and open discussion windows.
+Unavailable comment/status endpoints leave diffs readable. :ReviewRefresh
+retries these reads. Explicit publication, decisions and resolution wait for
+outstanding reads to finish.
+
 Requires Neovim 0.11+, git, and the API client for the review host:
 authenticated glab for GitLab, authenticated gh for GitHub, curl for Codeberg.
 Other providers' clients are optional. GitLab and GitHub Enterprise Server

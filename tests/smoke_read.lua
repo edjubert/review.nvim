@@ -25,7 +25,7 @@ local ok, err = xpcall(function()
     assert(vim.wait(60000, function() return s.error or predicate() end, 20), "Timed out")
     assert(not s.error, s.error)
   end
-  wait(function() return s.ready and s.current end)
+  wait(function() return s.ready and s.current and not next(s.load_state.pending) end)
   local commit_count, file_views = #s.data.commits, 0
   for index, commit in ipairs(s.data.commits) do
     s:select_commit(index)

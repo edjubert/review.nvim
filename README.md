@@ -445,6 +445,21 @@ The window uses the loaded review metadata. Run `:ReviewRefresh` to retrieve
 changes made to the title or description since the review was opened.
 Configure `keymaps.info` to enable a shortcut; it defaults to `false`.
 
+### Progressive loading
+
+Opening a review loads its information, files, discussions and statuses
+independently. The title and `:ReviewInfo` description appear as soon as metadata
+arrives. Commits appear as their list becomes available; diffs open once the
+complete file and commit lists, exact diff references and Git snapshots have
+been verified.
+
+Comments and pipeline/reviewer statuses continue loading in the background
+while you browse files and commits. The panel shows `loading…` for pending
+sections. Late comments update the current diff and open discussion windows.
+A failed comment or status request shows `unavailable` and leaves the diff
+readable; `:ReviewRefresh` retries these reads. Publication, review decisions
+and resolution wait for outstanding reads to finish.
+
 ### Refresh a review
 
 Run `:ReviewRefresh` to fetch the latest MR/PR metadata, commits, diffs and
@@ -879,8 +894,14 @@ nvim --headless -u NONE -i NONE -l tests/run.lua
 ```
 
 The suite checks line mappings, positions, persistence, Git snapshot loading,
-status aggregation and publication/decision behavior with mocked transports. It never posts comments to
-a real service.
+progressive loading, status aggregation and publication/decision behavior with
+mocked transports. It never posts comments to a real service.
+
+Run only the progressive loading checks with:
+
+```sh
+nvim --headless -u NONE -i NONE -l tests/run.lua progressive
+```
 
 An optional integration check reads a real MR/PR, renders every commit/file view,
 and saves one comment as a temporary local draft. Its transport rejects writes:

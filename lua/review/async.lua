@@ -24,6 +24,38 @@ function M.run(fn, on_error)
   step()
 end
 
+-- Start independent reads now, then await their results from any coroutine.
+-- A completed future can be awaited more than once (e.g. shared diff refs).
+function M.future(fn)
+  local future = { listeners = {} }
+  local function finish(ok, ...)
+    future.done, future.ok = true, ok
+    future.results = { n = select("#", ...), ... }
+    for _, done in ipairs(future.listeners) do done() end
+    future.listeners = nil
+  end
+  M.run(function() finish(true, fn()) end, function(err) finish(false, err) end)
+  return future
+end
+
+function M.await(future)
+  if not future.done then
+    coroutine.yield(function(done)
+      if future.done then done()
+      else future.listeners[#future.listeners + 1] = done end
+    end)
+  end
+  if not future.ok then error(future.results[1], 0) end
+  return unpack(future.results, 1, future.results.n)
+end
+
+function M.all(tasks)
+  local futures, results = {}, {}
+  for key, fn in pairs(tasks) do futures[key] = M.future(fn) end
+  for key, future in pairs(futures) do results[key] = M.await(future) end
+  return results
+end
+
 function M.system(argv, opts)
   return coroutine.yield(function(done)
     vim.system(argv, vim.tbl_extend("force", { text = true, timeout = 120000 }, opts or {}), done)

@@ -36,7 +36,7 @@ end
 
 function Session:task(fn, on_error, generation)
   async.run(fn, function(err)
-    if generation and generation ~= self.generation then return end
+    if self.closed or generation and generation ~= self.generation then return end
     if on_error then on_error(err) end
     if not self.closed then
       self.error = err
@@ -86,7 +86,7 @@ function Session:refresh()
     notify("The review is already refreshing.")
     return
   end
-  local initial = not self.data
+  local initial = not self.ready
   local commit = self.data and self.data.commits[self.commit_index]
   local file = self.files[self.file_index or 0]
   local selection = {
@@ -101,26 +101,122 @@ function Session:refresh()
   self.refreshing = true
   self.generation = self.generation + 1
   local generation = self.generation
+  local loading = {
+    initial = initial,
+    pending = { info = true, files = true, discussions = true, pipeline = true, review = true },
+    errors = {},
+  }
+  self.load_state, self.files_loading = loading, true
   self.error = nil
   ui.panel(self)
   if not self.current then
     ui.empty(self, initial and "Loading review…" or "Refreshing review…")
   end
-  self:task(function()
-    local data = self.provider.load(self.target)
+  local function active()
+    return self.load_state == loading and not loading.failed and ui.valid(self)
+  end
+  local info = async.future(function()
+    local mr = self.provider.info(self.target)
+    if not active() then return mr end
+    loading.data = {
+      mr = mr, commits = {}, diffs = {}, discussions = {},
+      status = { pipeline = { state = "loading" }, review = { state = "loading" } },
+    }
+    loading.pending.info = nil
+    if initial then self.data = loading.data end
+    ui.panel(self)
+    return mr
+  end)
+  local project = async.future(function() return self.provider.project(self.target) end)
+  local references = async.future(function()
+    local mr = async.await(info)
+    if not active() then return mr end
+    if self.provider.references then return self.provider.references(self.target, mr) end
+    return mr
+  end)
+  local commits = async.future(function()
+    local mr, context = async.await(references)
+    if not active() then return {} end
+    local result = self.provider.commits(self.target, mr, context)
+    if active() then
+      loading.data.commits = result
+      ui.panel(self)
+    end
+    return result
+  end)
+  local diffs = async.future(function()
+    local mr = async.await(info)
+    if not active() then return {} end
+    return self.provider.diffs(self.target, mr)
+  end)
+  local repository = async.future(function()
+    local mr, metadata = async.await(references), async.await(project)
+    if not active() then return end
     local config = vim.deepcopy(self.config)
     -- A refresh must use the same repository even if the current cwd changed.
     config.repo = self.repo or config.repo
-    local repo = git.prepare(self.target, data.project, config)
-    for _, sha in ipairs({ data.mr.diff_refs.base_sha, data.mr.diff_refs.head_sha }) do
-      git.ensure(repo, sha, data.project, config)
+    local repo = git.prepare(self.target, metadata, config)
+    for _, sha in ipairs({ mr.diff_refs.base_sha, mr.diff_refs.head_sha }) do
+      if not active() then return end
+      git.ensure(repo, sha, metadata, config)
     end
+    return repo
+  end)
+  local function section(name, dependencies, read, apply)
+    async.run(function()
+      local result = read()
+      if not active() then return end
+      loading.pending[name] = nil
+      apply(loading.data, result)
+      if result.error then
+        loading.errors[name] = result.error
+        notify(result.error, vim.log.levels.WARN)
+      end
+      ui.panel(self)
+    end, function(err)
+      if not active() then return end
+      for _, dependency in ipairs(dependencies) do
+        if dependency.done and not dependency.ok then return end
+      end
+      loading.pending[name], loading.errors[name] = nil, err
+      if name == "pipeline" or name == "review" then
+        loading.data.status[name] = { state = "unknown", error = err }
+      elseif self.data == loading.data then
+        self:update_discussion_views(true)
+      end
+      notify(err, vim.log.levels.WARN)
+      ui.panel(self)
+    end)
+  end
+  section("discussions", { references, diffs }, function()
+    local mr, files = async.await(references), async.await(diffs)
+    if not active() then return {} end
+    return self.provider.discussions(self.target, mr.diff_refs, files)
+  end, function(data, result)
+    data.discussions = result
+    if self.data == data and self.ready and not self.refreshing then self:update_discussion_views() end
+  end)
+  for _, name in ipairs({ "pipeline", "review" }) do
+    section(name, { references }, function()
+      local mr = async.await(references)
+      if not active() then return {} end
+      return self.provider[name .. "_status"](self.target, mr)
+    end, function(data, result) data.status[name] = result end)
+  end
+  self:task(function()
+    -- Metadata may still be in flight when this coroutine starts.
+    async.await(references)
+    if not active() then return end
+    local data = loading.data
+    data.project, data.commits, data.diffs = async.await(project), async.await(commits), async.await(diffs)
+    local repo = async.await(repository)
+    if not active() then return end
     local latest = self.provider.current(self.target)
     if not position.same_refs(data.mr.diff_refs, latest.diff_refs) then
       error("The review changed while loading. Run :ReviewRefresh to try again.", 0)
     end
-    data.status = self:read_status(latest)
-    if generation ~= self.generation then return end
+    if not active() or generation ~= self.generation then return end
+    loading.pending.files = nil
     self.refreshing = false
     if not ui.valid(self) then return end
     local index = initial and #data.commits > 0 and 1 or 0
@@ -133,10 +229,19 @@ function Session:refresh()
     if not initial then self:reload_viewed() end
     self.error = nil
     self:select_commit(index, selection)
+    self:update_discussion_views()
     if not initial then notify("Review refreshed.") end
-  end, function()
-    self.refreshing = false
+  end, function(err)
+    for _, name in ipairs({ "pipeline", "review" }) do
+      if loading.pending[name] and loading.data then
+        loading.data.status[name] = { state = "unknown", error = err }
+      end
+    end
+    if loading.pending.discussions then loading.errors.discussions = err end
+    loading.failed, loading.pending, loading.errors.files = true, {}, err
+    self.refreshing, self.files_loading = false, false
     ui.panel(self)
+    if self.data == loading.data then self:update_discussion_views(true) end
     -- Resume an old view whose pending load was invalidated by this refresh.
     if self.ready and not self.current and not self.closed then
       self:select_commit(self.commit_index, selection)
@@ -149,7 +254,9 @@ function Session:select_commit(index, selection)
   self.generation = self.generation + 1
   local generation = self.generation
   self.commit_index, self.current, self.files, self.file_index = index, nil, {}, nil
+  self.files_loading, self.files_error = true, nil
   ui.empty(self, "Loading changed files…")
+  ui.panel(self)
   self:task(function()
     local refs = self.data.mr.diff_refs
     local base, head = refs.base_sha, refs.head_sha
@@ -162,7 +269,7 @@ function Session:select_commit(index, selection)
     end
     local files = git.files(self.repo, base, head)
     if generation ~= self.generation or self.closed then return end
-    self.base, self.head, self.files = base, head, files
+    self.base, self.head, self.files, self.files_loading = base, head, files, false
     ui.panel(self)
     local file_index = 1
     if selection and selection.path then
@@ -182,7 +289,10 @@ function Session:select_commit(index, selection)
     end
     if #files > 0 then self:select_file(file_index, selection)
     else ui.empty(self, "This comparison contains no changed files.") end
-  end, nil, generation)
+  end, function(err)
+    self.files_loading, self.files_error = false, err
+    ui.panel(self)
+  end, generation)
 end
 
 function Session:select_file(index, selection)
@@ -204,9 +314,14 @@ function Session:select_file(index, selection)
     local rows, err = diff.build(old, new)
     if generation ~= self.generation or self.closed then return end
     local current = { file = file, base = base, head = head, old = old, new = new, rows = rows, error = err }
-    if rows then self:map_threads(current, generation) end
+    if rows then
+      repeat
+        self:map_threads(current, generation)
+      until current.discussions == self.data.discussions or generation ~= self.generation or self.closed
+    end
     if generation ~= self.generation or self.closed then return end
     self.current = current
+    local focused = vim.api.nvim_get_current_win()
     ui.render(self, self.current)
     if not ui.valid(self) then return end
     if rows and vim.api.nvim_win_is_valid(self.viewer_win) then
@@ -227,7 +342,9 @@ function Session:select_file(index, selection)
         vim.cmd.normal({ args = { "zvzz" }, bang = true })
       end)
     end
-    if selection and selection.panel_focused and vim.api.nvim_win_is_valid(self.panel_win) then
+    if focused ~= self.viewer_win and focused ~= self.panel_win and vim.api.nvim_win_is_valid(focused) then
+      vim.api.nvim_set_current_win(focused)
+    elseif selection and selection.panel_focused and vim.api.nvim_win_is_valid(self.panel_win) then
       vim.api.nvim_set_current_win(self.panel_win)
     end
   end, nil, generation)
@@ -237,6 +354,7 @@ end
 -- Historical refs are fetched only on an explicit jump, never while rendering.
 function Session:map_threads(current, generation)
   current.thread_anchors = {}
+  current.discussions = self.data.discussions
   local refs, maps, renames = self.data.mr.diff_refs, {}, {}
   local function destination_path(anchor, source, destination)
     local paths = renames[anchor.side]
@@ -252,7 +370,7 @@ function Session:map_threads(current, generation)
     local path = paths[anchor.path]
     return path == nil and anchor.path or path
   end
-  for _, discussion in ipairs(self.data.discussions) do
+  for _, discussion in ipairs(current.discussions) do
     local anchor = threads.anchor(discussion)
     if anchor then
       local old = anchor.side == "old"
@@ -525,7 +643,7 @@ end
 
 function Session:show_pipelines()
   if self.closed or not ui.valid(self) then return end
-  if not self.ready or not self.data then
+  if not self.data then
     notify("The review metadata is not loaded yet.", vim.log.levels.WARN)
     return
   end
@@ -632,6 +750,13 @@ function Session:open_comment()
   end)
 end
 
+function Session:discussion_empty()
+  local loading = self.load_state
+  return loading and loading.pending.discussions and "Loading discussions…"
+    or loading and loading.errors.discussions and "Discussions unavailable. Run :ReviewRefresh to retry."
+    or "No discussions in this review."
+end
+
 function Session:show_threads(discussions, title)
   if not self.data or not ui.valid(self) then return end
   local lines, entries, comments = threads.document(discussions or self.data.discussions)
@@ -640,7 +765,7 @@ function Session:show_threads(discussions, title)
     .. " · " .. (ui.key(self, "select_comment") or ":ReviewJump") .. ": line · " .. key
     .. ": browser · " .. (ui.key(self, "close_document") or ":q") .. ": close", lines, {
     config = self.config,
-    empty = "No discussions in this review.",
+    empty = self:discussion_empty(),
     entries = entries,
     on_select = function(discussion, close) self:jump_thread(discussion, close) end,
   })
@@ -660,8 +785,8 @@ function Session:show_threads(discussions, title)
   })
 end
 
-function Session:update_discussion_views()
-  if self.current and self.current.rows then self:map_threads(self.current, self.generation) end
+function Session:update_discussion_views(skip_mapping)
+  if not skip_mapping and self.current and self.current.rows then self:map_threads(self.current, self.generation) end
   ui.comments(self)
   for buf, view in pairs(self.thread_views) do
     if vim.api.nvim_buf_is_valid(buf) then
@@ -674,7 +799,7 @@ function Session:update_discussion_views()
       for key in pairs(view.entries) do view.entries[key] = nil end
       for key, entry in pairs(entries) do view.entries[key] = entry end
       self.thread_documents[buf] = comments
-      ui.update_document(buf, lines)
+      ui.update_document(buf, lines, self:discussion_empty())
     end
   end
 end
@@ -689,7 +814,18 @@ function Session:resolution_available()
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return false
   end
+  if self:reads_pending() then return false end
   return true
+end
+
+-- Keep a late read from replacing the result of an explicit write.
+function Session:reads_pending()
+  local loading = self.load_state
+  if loading and next(loading.pending) then
+    notify("Wait for comments and review statuses to finish loading.", vim.log.levels.WARN)
+    return true
+  end
+  return false
 end
 
 function Session:resolve_conversations(selected, refs)
@@ -874,6 +1010,7 @@ end
 
 function Session:submit()
   if not self.ready or self.submitting or self.deciding or self.resolving or self.refreshing or self.closed then return end
+  if self:reads_pending() then return end
   if #self.drafts == 0 then notify("No local drafts to submit."); return end
   for _, draft in ipairs(self.drafts) do
     if draft.status == "uncertain" or draft.status == "sending" then
@@ -913,6 +1050,7 @@ function Session:submit()
   if self.provider.request_changes then choices[#choices + 1] = changes_choice end
   local function publish(request_changes, summary)
     if self.closed or self.submitting or self.deciding or self.resolving or self.refreshing then return end
+    if self:reads_pending() then return end
     self.submitting = true
     local count, requesting = 0, false
     self:task(function()
@@ -1017,6 +1155,7 @@ function Session:decision(action, summary)
     notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
     return
   end
+  if self:reads_pending() then return end
   self.deciding = true
   local sending = false
   self:task(function()

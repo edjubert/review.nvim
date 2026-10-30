@@ -63,7 +63,7 @@ end
 function M.label(state)
   if type(state) ~= "string" then return "unavailable" end
   return ({
-    none = "none", unknown = "unavailable", pending = "pending",
+    none = "none", unknown = "unavailable", loading = "loading…", pending = "pending",
     approved = "approved", changes_requested = "changes requested",
     review_started = "in progress", reviewed = "reviewed",
     unreviewed = "pending", unapproved = "approval revoked",

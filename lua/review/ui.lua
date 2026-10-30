@@ -559,11 +559,17 @@ end
 
 function M.panel(session)
   if not M.valid(session) or not vim.api.nvim_buf_is_valid(session.panel_buf) then return end
+  local anchor
+  if session.panel_win and vim.api.nvim_win_is_valid(session.panel_win) then
+    anchor = (session.panel_entries or {})[vim.api.nvim_win_get_cursor(session.panel_win)[1]]
+  end
   local lines = {
     session.provider.prefix .. session.target.iid .. " " .. (session.data and session.data.mr.title or "Loading…"),
     "",
   }
-  if session.refreshing and session.data then lines[1] = lines[1] .. " · refreshing…" end
+  if session.refreshing and session.data then
+    lines[1] = lines[1] .. (session.load_state and session.load_state.initial and " · loading…" or " · refreshing…")
+  end
   local decorations = { { line = 1, start = 0, finish = #lines[1], group = "ReviewPanelTitle" } }
   session.panel_entries = {}
   local function highlight(line, start, finish, group)
@@ -594,6 +600,16 @@ function M.panel(session)
         .. (reviewer.stale and " (stale)" or ""), reviewer.stale and "unknown" or reviewer.state)
     end
     lines[#lines + 1] = ""
+  end
+  local loading = session.load_state
+  if loading then
+    for _, section in ipairs({ { "files", "Files" }, { "discussions", "Comments" } }) do
+      local name, label = unpack(section)
+      if loading.pending[name] or loading.errors[name] then
+        lines[#lines + 1] = label .. (loading.pending[name] and ": loading…" or ": unavailable")
+        highlight(#lines, 0, #lines[#lines], "ReviewStatusWarn")
+      end
+    end
   end
   if session.files and #session.files > 0 then
     local count = 0
@@ -639,7 +655,10 @@ function M.panel(session)
     end
     local root = file_tree(session)
     children(root, 0)
-    if session.files and #session.files == 0 then lines[#lines + 1] = "    No changed files" end
+    if session.files and #session.files == 0 then
+      lines[#lines + 1] = session.files_loading and "    Loading changed files…"
+        or (not session.ready or session.files_error) and "    Changed files unavailable" or "    No changed files"
+    end
     if root.total > 0 and root.count == 0 then lines[#lines + 1] = "    No files match this filter." end
   end
   entry((session.commit_index == 0 and "▾ " or "▸ ") .. "Complete " .. session.provider.label,
@@ -663,6 +682,7 @@ function M.panel(session)
       decoration.line - 1, decoration.start or 0, opts)
   end
   M.filter(session)
+  if anchor then restore_panel_entry(session, anchor) end
 end
 
 function M.file_title(session, current)
@@ -904,9 +924,9 @@ function M.document(title, lines, opts)
   return buf, win
 end
 
-function M.update_document(buf, lines)
+function M.update_document(buf, lines, empty)
   if not vim.api.nvim_buf_is_valid(buf) then return end
-  set_lines(buf, #lines > 0 and lines or { "No discussions in this review." })
+  set_lines(buf, #lines > 0 and lines or { empty or "No discussions in this review." })
 end
 
 return M

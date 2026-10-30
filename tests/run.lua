@@ -53,6 +53,19 @@ local config = {
 local refs = { base_sha = "base", start_sha = "start", head_sha = "head" }
 local file = { old_path = "old.txt", new_path = "new.txt" }
 
+dofile("tests/progressive_loading.lua")({
+  test = test, eq = eq, raises = raises, run = run,
+  Session = Session, ui = ui, git = git, config = config, target = target,
+})
+
+if arg[1] == "progressive" then
+  provider.status = actual_gitlab_status
+  vim.fn.delete(root, "rf")
+  print(("%d passed, %d failed"):format(passed, failed))
+  if failed > 0 then vim.cmd("cquit 1") end
+  return
+end
+
 test("emoji shortcodes render Unicode sequences and aliases while keeping unknown names literal", function()
   eq(emoji.render(":thinking: :question:\n:zero: :leftwards_arrow_with_hook: :question:"),
     "🤔 ❓\n0️⃣ ↩️ ❓")
@@ -740,11 +753,19 @@ end)
 test("inline toggle survives file and commit navigation and successful or failed refreshes", function()
   local s = inline_fixture()
   local saved = {
-    load = provider.load, current = provider.current,
+    info = provider.info, current = provider.current, commits = provider.commits,
+    project = provider.project, diffs = provider.diffs, discussions = provider.discussions,
+    pipeline_status = provider.pipeline_status, review_status = provider.review_status,
     prepare = git.prepare, ensure = git.ensure, files = git.files, content = git.content,
   }
   local data, old, new = vim.deepcopy(s.data), s.current.old, s.current.new
-  provider.load = function() return vim.deepcopy(data) end
+  provider.info = function() return vim.deepcopy(data.mr) end
+  provider.commits = function() return vim.deepcopy(data.commits) end
+  provider.project = function() return vim.deepcopy(data.project) end
+  provider.diffs = function() return vim.deepcopy(data.diffs) end
+  provider.discussions = function() return vim.deepcopy(data.discussions) end
+  provider.pipeline_status = function() return { state = "none" } end
+  provider.review_status = function() return { state = "pending" } end
   provider.current = function() return { diff_refs = refs } end
   git.prepare = function() return s.repo end
   git.ensure = function() end
@@ -777,7 +798,7 @@ test("inline toggle survives file and commit navigation and successful or failed
     displayed("code.lua", 0)
     local lines = vim.api.nvim_buf_get_lines(s.viewer_buf, 0, -1, false)
     local blocks = comment_marks(s)
-    provider.load = function() error("Simulated refresh failure") end
+    provider.info = function() error("Simulated refresh failure") end
     s:refresh()
     assert(vim.wait(10000, function() return not s.refreshing end, 10))
     assert(s.error:find("Simulated refresh failure", 1, true))
@@ -786,7 +807,8 @@ test("inline toggle survives file and commit navigation and successful or failed
     eq(comment_marks(s), blocks)
   end, debug.traceback)
   s:close()
-  provider.load, provider.current = saved.load, saved.current
+  for _, name in ipairs({ "info", "current", "commits", "project", "diffs", "discussions",
+    "pipeline_status", "review_status" }) do provider[name] = saved[name] end
   git.prepare, git.ensure, git.files, git.content = saved.prepare, saved.ensure, saved.files, saved.content
   assert(ok, err)
 end)

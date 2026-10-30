@@ -197,9 +197,10 @@ function M.discussions(target, refs, files)
   return discussions
 end
 
-function M.load(target)
-  local endpoint, pr = M.pr_path(target), M.current(target)
-  local raw_commits = M.pages(target, endpoint .. "/commits?verification=false&files=false")
+M.info = M.current
+
+function M.commits(target, pr)
+  local raw_commits = M.pages(target, M.pr_path(target) .. "/commits?verification=false&files=false")
   local commits, seen = {}, {}
   if #raw_commits > 0 and raw_commits[1].sha ~= pr.head.sha then
     error("Codeberg's PR commit list changed while loading. Run :ReviewRefresh.", 0)
@@ -221,6 +222,11 @@ function M.load(target)
       id = commit.sha, parent_ids = parents, title = commit.commit.message:match("^[^\r\n]*"),
     }
   end
+  return commits
+end
+
+function M.diffs(target, pr)
+  local endpoint = M.pr_path(target)
   local raw_files, diffs = M.pages(target, endpoint .. "/files"), {}
   if type(pr.changed_files) ~= "number" or #raw_files ~= pr.changed_files then
     error("Codeberg's PR file list changed or is incomplete. Run :ReviewRefresh.", 0)
@@ -240,13 +246,19 @@ function M.load(target)
     }
   end
   patches.apply(M.request(target, endpoint .. ".diff", nil, true), diffs)
+  return diffs
+end
+
+function M.project(target)
   local repo = M.request(target, M.repo_path(target))
   if type(repo) ~= "table" then error("Codeberg returned an invalid repository.", 0) end
   return {
-    mr = pr, commits = commits, diffs = diffs,
-    project = { http_url_to_repo = repo.clone_url, ssh_url_to_repo = repo.ssh_url },
-    discussions = M.discussions(target, pr.diff_refs, diffs),
+    http_url_to_repo = repo.clone_url, ssh_url_to_repo = repo.ssh_url,
   }
+end
+
+function M.load(target)
+  return require("review.providers").load(target)
 end
 
 function M.build_position(refs, file, rows)
@@ -275,16 +287,24 @@ end
 
 M.validate_request_changes = M.validate_submission
 
+function M.pipeline_status(target, pr)
+  return status.read(function()
+    local result = M.request(target, M.repo_path(target) .. "/commits/" .. pr.diff_refs.head_sha .. "/status")
+    return { state = (result.total_count or 0) > 0 and status.pipeline({ result.state or "unknown" }) or "none" }
+  end)
+end
+
+function M.review_status(target)
+  return status.read(function()
+    return status.reviews(M.pages(target, M.pr_path(target) .. "/reviews", true))
+  end)
+end
+
 function M.status(target, pr)
-  return {
-    pipeline = status.read(function()
-      local result = M.request(target, M.repo_path(target) .. "/commits/" .. pr.diff_refs.head_sha .. "/status")
-      return { state = (result.total_count or 0) > 0 and status.pipeline({ result.state or "unknown" }) or "none" }
-    end),
-    review = status.read(function()
-      return status.reviews(M.pages(target, M.pr_path(target) .. "/reviews", true))
-    end),
-  }
+  return async.all({
+    pipeline = function() return M.pipeline_status(target, pr) end,
+    review = function() return M.review_status(target, pr) end,
+  })
 end
 
 local function decision(target, refs, event, body)

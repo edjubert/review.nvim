@@ -83,37 +83,47 @@ local function load_commits(target, pr, comparison)
 end
 
 function M.current(target)
-  return with_refs(target, M.request(target, M.pr_path(target)))
+  return with_refs(target, M.info(target))
+end
+
+M.references = with_refs
+
+function M.pipeline_status(target, pr)
+  return status.read(function()
+    local endpoint = M.repo_path(target) .. "/commits/" .. url.encode(pr.diff_refs.head_sha)
+    local combined = M.request(target, endpoint .. "/status")
+    local states = {}
+    if (combined.total_count or 0) > 0 then states[#states + 1] = combined.state or "unknown" end
+    local count = 0
+    for page = 1, 1000 do
+      local checks = M.request(target, endpoint .. "/check-runs?per_page=100&page=" .. page)
+      if type(checks) ~= "table" or type(checks.check_runs) ~= "table"
+          or not vim.islist(checks.check_runs) or type(checks.total_count) ~= "number" then
+        error("GitHub returned an invalid check run list.", 0)
+      end
+      for _, check in ipairs(checks.check_runs) do
+        states[#states + 1] = check.status == "completed" and
+          (type(check.conclusion) == "string" and check.conclusion or "unknown") or check.status or "unknown"
+      end
+      count = count + #checks.check_runs
+      if count >= checks.total_count then return { state = status.pipeline(states) } end
+      if #checks.check_runs == 0 then break end
+    end
+    error("GitHub returned an incomplete check run list.", 0)
+  end)
+end
+
+function M.review_status(target)
+  return status.read(function()
+    return status.reviews(M.pages(target, M.pr_path(target) .. "/reviews"))
+  end)
 end
 
 function M.status(target, pr)
-  return {
-    pipeline = status.read(function()
-      local endpoint = M.repo_path(target) .. "/commits/" .. url.encode(pr.diff_refs.head_sha)
-      local combined = M.request(target, endpoint .. "/status")
-      local states = {}
-      if (combined.total_count or 0) > 0 then states[#states + 1] = combined.state or "unknown" end
-      local count = 0
-      for page = 1, 1000 do
-        local checks = M.request(target, endpoint .. "/check-runs?per_page=100&page=" .. page)
-        if type(checks) ~= "table" or type(checks.check_runs) ~= "table"
-            or not vim.islist(checks.check_runs) or type(checks.total_count) ~= "number" then
-          error("GitHub returned an invalid check run list.", 0)
-        end
-        for _, check in ipairs(checks.check_runs) do
-          states[#states + 1] = check.status == "completed" and
-            (type(check.conclusion) == "string" and check.conclusion or "unknown") or check.status or "unknown"
-        end
-        count = count + #checks.check_runs
-        if count >= checks.total_count then return { state = status.pipeline(states) } end
-        if #checks.check_runs == 0 then break end
-      end
-      error("GitHub returned an incomplete check run list.", 0)
-    end),
-    review = status.read(function()
-      return status.reviews(M.pages(target, M.pr_path(target) .. "/reviews"))
-    end),
-  }
+  return async.all({
+    pipeline = function() return M.pipeline_status(target, pr) end,
+    review = function() return M.review_status(target, pr) end,
+  })
 end
 
 local function decision(target, refs, event, body)
@@ -184,14 +194,16 @@ function M.discussions(target, refs, files)
   return discussions
 end
 
-function M.load(target)
-  local endpoint = M.pr_path(target)
-  local pr, comparison = M.current(target)
-  if type(pr.commits) ~= "number" or type(pr.changed_files) ~= "number" then
-    error("GitHub did not provide the PR commit and file counts.", 0)
-  end
-  if pr.changed_files > 3000 then
-    error("GitHub's PR files API is limited to 3000 files; refusing an incomplete review.", 0)
+function M.info(target)
+  local pr = M.request(target, M.pr_path(target))
+  if type(pr) ~= "table" then error("GitHub returned an invalid PR.", 0) end
+  pr.description = type(pr.body) == "string" and pr.body or ""
+  return pr
+end
+
+function M.commits(target, pr, comparison)
+  if type(pr.commits) ~= "number" then
+    error("GitHub did not provide the PR commit count.", 0)
   end
   local raw_commits = load_commits(target, pr, comparison)
   if #raw_commits ~= pr.commits then error("The PR commit list changed while loading. Run :ReviewRefresh.", 0) end
@@ -209,7 +221,17 @@ function M.load(target)
       title = (commit.commit.message or ""):match("^[^\r\n]*"),
     }
   end
-  local raw_files = M.pages(target, endpoint .. "/files")
+  return commits
+end
+
+function M.diffs(target, pr)
+  if type(pr.changed_files) ~= "number" then
+    error("GitHub did not provide the PR file count.", 0)
+  end
+  if pr.changed_files > 3000 then
+    error("GitHub's PR files API is limited to 3000 files; refusing an incomplete review.", 0)
+  end
+  local raw_files = M.pages(target, M.pr_path(target) .. "/files")
   if #raw_files ~= pr.changed_files then error("The PR file list changed while loading. Run :ReviewRefresh.", 0) end
   local diffs = {}
   for _, file in ipairs(raw_files) do
@@ -221,12 +243,18 @@ function M.load(target)
       diff = type(file.patch) == "string" and file.patch or "",
     }
   end
+  return diffs
+end
+
+function M.project(target)
   local repo = M.request(target, M.repo_path(target))
   return {
-    mr = pr, commits = commits, diffs = diffs,
-    project = { http_url_to_repo = repo.clone_url, ssh_url_to_repo = repo.ssh_url },
-    discussions = M.discussions(target, pr.diff_refs, diffs),
+    http_url_to_repo = repo.clone_url, ssh_url_to_repo = repo.ssh_url,
   }
+end
+
+function M.load(target)
+  return require("review.providers").load(target)
 end
 
 function M.build_position(refs, file, rows)
