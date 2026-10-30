@@ -370,14 +370,15 @@ Local drafts are stored in state_dir/drafts/.
 
 JOB LOG SOURCES                                            *review-job-logs*
 
+Additional sources and parsing are opt-in. The plugin assumes no application
+log schema. Configure sources and parsers in your own Neovim configuration.
+
 >lua
     job_logs = {
       gitlab = {
         trace_path = "projects/{project_id}/jobs/{job_id}/trace",
-        artifacts = { "logs/integration.log", "reports/tests.jsonl" },
+        artifacts = { "logs/worker.log", "reports/tests.jsonl" },
       },
-      adapters = { require("my_ci_logs") },
-      -- parse = function(content, ctx, source) return content end,
     }
 <
 
@@ -393,6 +394,37 @@ artifacts is a list of exact relative paths without globs or traversal. They
 appear for succeeded, failed or canceled jobs and are read individually from
 GitLab's artifacts API. Missing/expired files display an error; the trace stays
 accessible. Custom adapters can discover paths dynamically or read other APIs.
+
+Set job_logs.parse to format structured content. This example uses a fictional
+JSONL schema (timestamp, level, message) and preserves unrecognized lines:
+
+>lua
+    job_logs = {
+      gitlab = { artifacts = { "reports/tests.jsonl" } },
+      parse = function(content, _, source)
+        if source.path ~= "reports/tests.jsonl" then return content end
+        local lines = {}
+        for line in content:gmatch("[^\n]+") do
+          local ok, event = pcall(vim.json.decode, line)
+          if ok and type(event) == "table"
+              and type(event.message) == "string" then
+            lines[#lines + 1] = ("%s [%s] %s"):format(
+              tostring(event.timestamp or ""),
+              tostring(event.level or "info"):upper(), event.message)
+          else
+            lines[#lines + 1] = line
+          end
+        end
+        return table.concat(lines, "\n")
+      end,
+    }
+<
+
+Register an adapter from your configuration or a separate plugin:
+
+>lua
+    job_logs = { adapters = { require("my_ci_logs") } }
+<
 
 Adapters are tables with a unique id containing letters, digits, _ or -.
 gitlab-trace and gitlab-artifacts are reserved IDs. Hooks:
@@ -422,6 +454,17 @@ Replacement snapshots reset previous content/cursor. Read failures retain the
 last content/cursor; parser failures display original text with a warning.
 Source discovery errors keep the trace and other sources available.
 Closing the picker releases state and prevents late responses changing its UI.
+
+The fully simulated screenshot demo has trace, artifact, JSONL parser and custom
+adapter sources. From a checkout, using a fresh session with Telescope:
+
+>sh
+    nvim -c 'luafile scripts/screenshots/demo.lua' -c DemoJobLogs
+<
+
+Move the source selection to preview it. Select to keep it and return to jobs;
+Escape restores the previous source, selected job and job search. All demo
+content is fictional and uses no network. See scripts/screenshots/README.md.
 
 FILE FILTER                                                   *review-filter*
 

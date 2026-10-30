@@ -31,6 +31,8 @@ pipeline, reviewer decisions and two of five files viewed. `:ReviewViewed` and
   or Codeberg.
 - See the latest pipeline/check status and reviewer decisions in the panel.
 - Browse GitLab MR pipelines and their jobs in Telescope.
+- Preview GitLab job traces, individual artifacts and custom log sources, with optional
+  parsers and streaming adapters configured in Lua.
 - Search review commands and configured shortcuts in Telescope.
 - Approve the open MR/PR or request changes with explicit commands.
 - Resolve a GitLab conversation, or confirm resolving all open MR conversations.
@@ -61,8 +63,8 @@ explains how to reproduce the GitLab scenes without connecting to GitLab.
   for private repositories or publication.
 - Git access to the repository (SSH by default).
 - Optional: [`telescope.nvim`](https://github.com/nvim-telescope/telescope.nvim)
-  and its `plenary.nvim` dependency for `:ReviewHelp`, `:ReviewPipelines`
-  and `:ReviewFilesPicker`.
+  and its `plenary.nvim` dependency for `:ReviewHelp`, `:ReviewPipelines`,
+  `:ReviewJobLogs`, `:ReviewJobRefresh` and `:ReviewFilesPicker`.
   The sidebar's file filter works without Telescope.
 
 ### Authentication
@@ -123,7 +125,8 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewHelp", "ReviewPipelines", "ReviewJobLogs", "ReviewFiles", "ReviewFilesClear", "ReviewFilesPicker",
+    "Review", "ReviewInfo", "ReviewHelp", "ReviewPipelines", "ReviewJobLogs", "ReviewJobRefresh",
+    "ReviewFiles", "ReviewFilesClear", "ReviewFilesPicker",
     "ReviewNextCommit", "ReviewPrevCommit", "ReviewNextFile", "ReviewPrevFile",
     "ReviewNextChange", "ReviewPrevChange", "ReviewComplete", "ReviewPanel",
     "ReviewViewed", "ReviewUnviewed", "ReviewToggleViewed",
@@ -523,6 +526,9 @@ to change these colors and stage headings.
 | Jobs | Optional `keymaps.pipeline_back` | Return to the pipeline list |
 | Jobs | `:ReviewJobRefresh` or optional `keymaps.pipeline_refresh` (`<C-r>` in the example) | Reload the selected job's metadata and log, bypassing the cache |
 | Jobs | `:ReviewJobLogs` or optional `keymaps.pipeline_logs` (`<C-l>` in the example) | Choose a log source in the same Telescope picker; Escape returns to jobs |
+| Log sources | Move the selection | Preview the highlighted source |
+| Log sources | Telescope's selection action | Keep the source and return to the selected job |
+| Log sources | Escape | Restore the previous source and job search |
 
 Telescope's selection variants (default, split, tab and drop) all perform the
 picker action above. Custom selection bindings are supported; pipeline and job
@@ -540,12 +546,11 @@ policy and failure reason when available. Use Telescope's usual search and
 preview scrolling keys. Once loaded, the preview scrolls to the end of the log;
 scroll upward to read earlier output or its metadata header.
 
-![Failed GitLab integration checks job showing its stage, duration, queue time, script_failure reason, demo-runner and allowed failure policy](assets/screenshots/pipeline-job.png)
+![Failed GitLab integration checks job showing metadata and its ANSI-colored simulated log](assets/screenshots/pipeline-job.png)
 
 Selecting a pipeline opens its jobs picker. The preview here shows the failed
-`integration checks` job and its timings, runner and failure policy.
-This earlier capture shows the metadata view; the current preview includes the
-job log beneath it.
+`integration checks` job, its timings, runner and failure policy, and its
+simulated log.
 
 The command requires `telescope.nvim` and `plenary.nvim`; the rest of the plugin
 works without them. With lazy.nvim, you can add
@@ -596,6 +601,10 @@ Pipeline details for GitHub and Codeberg are not implemented.
 
 ### Custom job logs
 
+No additional source or parser is enabled by default. Configure exact artifact
+paths, a different trace endpoint, or adapters in your own Neovim configuration.
+The plugin does not assume an application log format.
+
 `:ReviewJobLogs` works from the jobs picker or its preview. The standard job
 trace is always the first source. Additional sources are opt-in; discovering
 them does not slow down the initial trace preview. Canceling the source chooser
@@ -612,21 +621,25 @@ require("review").setup({
   job_logs = {
     gitlab = {
       trace_path = "projects/{project_id}/jobs/{job_id}/trace",
-      artifacts = { "logs/integration.log", "reports/tests.jsonl" },
+      artifacts = { "logs/worker.log", "reports/tests.jsonl" },
     },
-    adapters = { require("my_ci_logs") },
   },
   keymaps = { pipeline_logs = "<C-l>" },
 })
 ```
 
 `trace_path` is a relative GitLab API path beginning with `projects/`. It uses
-the reviewed host's authenticated `glab` transport and GET method. Supported
-placeholders are `{project_id}` (the job's project ID, or the encoded review
-project path), `{project}` (the encoded review project path), `{job_id}` and
-`{pipeline_id}`. Fork jobs use their own project ID. URLs and unknown
-placeholders are rejected. Other hosts and authentication mechanisms belong
-in an adapter.
+the reviewed host's authenticated `glab` transport and GET method.
+
+| Placeholder | Value |
+| --- | --- |
+| `{project_id}` | Job project ID, or the URL-encoded review project path |
+| `{project}` | URL-encoded review project path |
+| `{job_id}` | Selected job ID |
+| `{pipeline_id}` | Pipeline ID |
+
+Fork jobs use their own project ID. URLs and unknown placeholders are rejected.
+Other hosts and authentication mechanisms belong in an adapter.
 
 `gitlab.artifacts` lists **exact relative file paths**, without globs or directory
 traversal. These sources appear after the job succeeds, fails or is canceled.
@@ -635,8 +648,49 @@ download or unpack the whole archive. Missing, expired or inaccessible artifacts
 show an error; the job trace remains selectable. Discovering artifact paths
 dynamically can be handled by an adapter.
 
+#### Parse structured logs
+
+`job_logs.parse(content, ctx, source)` is a fallback for sources without an
+adapter parser. This example formats a fictional JSONL report with
+`timestamp`, `level` and `message` fields. It preserves other sources and
+unrecognized lines, including incomplete JSON at the beginning of a log tail.
+Adapt it to your own schema:
+
+```lua
+require("review").setup({
+  job_logs = {
+    gitlab = { artifacts = { "reports/tests.jsonl" } },
+    parse = function(content, _, source)
+      if source.path ~= "reports/tests.jsonl" then return content end
+      local lines = {}
+      for line in content:gmatch("[^\n]+") do
+        local ok, event = pcall(vim.json.decode, line)
+        if ok and type(event) == "table" and type(event.message) == "string" then
+          lines[#lines + 1] = ("%s [%s] %s"):format(
+            tostring(event.timestamp or ""),
+            tostring(event.level or "info"):upper(),
+            event.message
+          )
+        else
+          lines[#lines + 1] = line
+        end
+      end
+      return table.concat(lines, "\n")
+    end,
+  },
+})
+```
+
+Parsers return text and may include ANSI styling. `review.nvim` handles buffers,
+colors, timestamps and preview limits. A parser error displays the original
+content with a warning.
+
+#### Add a log adapter
+
 Adapters are ordinary Lua tables supplied by your configuration or a separate
-plugin. No project-specific service, URL or authentication is bundled:
+plugin. Register one with
+`job_logs = { adapters = { require("my_ci_logs") } }`.
+No project-specific service, URL or authentication is bundled:
 
 ```lua
 -- lua/my_ci_logs.lua; my-ci-cli is your separately installed, authenticated tool.
@@ -675,11 +729,6 @@ use this helper for external processes rather than blocking waits or shell
 commands. Adapters own their authentication. Keep credentials out of process
 arguments and repository configuration.
 
-An optional top-level `job_logs.parse(content, ctx, source)` applies to sources
-without their own parser, including the default trace and artifacts. It defaults
-to no transformation. Parsers return text; `review.nvim` retains control of
-buffers, ANSI rendering, timestamps and preview limits.
-
 The core manages focused polling, manual refresh and pending request sharing
 for the selected source. Append cursors survive refreshes and switching sources;
 new job IDs start fresh. Raw accumulated content retains at most 512 KiB, so a
@@ -688,6 +737,18 @@ content and cursor. Read errors retain the last successful content and cursor;
 parser errors show the original text with a warning. Failed source discovery
 reports the adapter error while keeping the trace and other sources accessible.
 Closing the picker ignores late responses and releases its content and cursors.
+
+#### Try the simulated demo
+
+The [demo guide](scripts/screenshots/README.md) includes a finished job with a
+plain-text artifact, a parsed JSONL report and an application-events adapter.
+All data is fictional; the demo makes no network requests.
+
+```sh
+nvim -c 'luafile scripts/screenshots/demo.lua' -c DemoJobLogs
+```
+
+![Log source picker previewing a fictional parsed JSONL test report](assets/screenshots/job-log-sources.png)
 
 ## Comments
 

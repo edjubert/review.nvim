@@ -255,6 +255,10 @@ assert(#inbox.filter(messages, { unread_only = true }) == 1)
     if fixture.on_action then fixture.on_action() end
   end
   function fixture.load(target) target_ok(target); return vim.deepcopy(fixture.data) end
+  function fixture.info(target) target_ok(target); return vim.deepcopy(fixture.data.mr) end
+  function fixture.project(target) target_ok(target); return vim.deepcopy(fixture.data.project) end
+  function fixture.commits(target) target_ok(target); return vim.deepcopy(fixture.data.commits) end
+  function fixture.diffs(target) target_ok(target); return vim.deepcopy(fixture.data.diffs) end
   function fixture.current(target) target_ok(target); return vim.deepcopy(fixture.data.mr) end
   function fixture.discussions(target) target_ok(target); return vim.deepcopy(fixture.data.discussions) end
   function fixture.status(target)
@@ -268,6 +272,8 @@ assert(#inbox.filter(messages, { unread_only = true }) == 1)
         } },
     }
   end
+  function fixture.pipeline_status(target) return fixture.status(target).pipeline end
+  function fixture.review_status(target) return fixture.status(target).review end
   function fixture.pipelines(target) target_ok(target); return vim.deepcopy(pipelines) end
   function fixture.pipeline_details(target, pipeline)
     target_ok(target)
@@ -338,6 +344,72 @@ assert(#inbox.filter(messages, { unread_only = true }) == 1)
     end
     return table.concat(lines, "\n") .. "\n"
   end
+  function fixture.job_artifact(target, job, path)
+    local value = fixture.job_details(target, job)
+    assert(value.state == "success" or value.state == "failed" or value.state == "canceled",
+      "Screenshot artifacts require a finished job.")
+    if path == "logs/worker.log" then
+      return table.concat({
+        "2026-10-29T09:05:02Z Worker started with 2 test processes.",
+        "2026-10-29T09:05:03Z Loaded 24 synthetic inbox messages.",
+        "2026-10-29T09:05:04Z \27[32mPASS: unread messages keep their original order.\27[0m",
+        "2026-10-29T09:06:25Z \27[31mFAIL: an empty query returned no messages.\27[0m",
+        "2026-10-29T09:06:25Z Test report saved to reports/tests.jsonl.",
+      }, "\n") .. "\n"
+    end
+    assert(path == "reports/tests.jsonl", "Unknown screenshot artifact.")
+    local lines = {}
+    for _, event in ipairs({
+      { timestamp = "2026-10-29T09:05:02Z", level = "info", message = "Starting integration checks" },
+      { timestamp = "2026-10-29T09:05:03Z", level = "info", message = "Loaded 24 synthetic inbox messages" },
+      { timestamp = "2026-10-29T09:05:04Z", level = "info", message = "PASS: message ordering is stable" },
+      { timestamp = "2026-10-29T09:05:05Z", level = "info", message = "PASS: unread filter keeps 8 messages" },
+      { timestamp = "2026-10-29T09:06:25Z", level = "error", message = "FAIL: empty query should keep all messages" },
+      { timestamp = "2026-10-29T09:06:25Z", level = "error", message = "Expected 24 messages, received 0" },
+      { timestamp = "2026-10-29T09:06:25Z", level = "info", message = "Result: 2 passed, 1 failed" },
+    }) do
+      lines[#lines + 1] = vim.json.encode(event)
+    end
+    return table.concat(lines, "\n") .. "\n"
+  end
+  fixture.job_logs = {
+    gitlab = { artifacts = { "logs/worker.log", "reports/tests.jsonl" } },
+    -- This schema is fictional and belongs to the demo, not the plugin.
+    parse = function(content, _, source)
+      if not (source.path and source.path:match("%.jsonl$")) then return content end
+      local lines = {}
+      for line in content:gmatch("[^\n]+") do
+        local ok, event = pcall(vim.json.decode, line)
+        if ok and type(event) == "table" and type(event.message) == "string" then
+          lines[#lines + 1] = ("%s [%s] %s"):format(tostring(event.timestamp or ""),
+            tostring(event.level or "info"):upper(), event.message)
+        else
+          lines[#lines + 1] = line
+        end
+      end
+      return table.concat(lines, "\n")
+    end,
+    adapters = { {
+      id = "demo-events",
+      match = function(ctx)
+        return ctx.host == "gitlab.example.com" and ctx.project == "demo/inbox"
+          and ctx.job.name == "integration checks"
+      end,
+      list = function() return { { id = "application", label = "Application events (adapter)" } } end,
+      read = function(ctx, source)
+        fixture.job_details(ctx.target, ctx.job)
+        assert(source.id == "application", "Unknown screenshot event stream.")
+        return table.concat({
+          "Application events for demo/inbox",
+          "",
+          "09:05:03  INFO   Inbox service started.",
+          "09:05:04  INFO   GET /messages?unread=true -> 200 (8 messages)",
+          "09:06:25  \27[31mERROR  GET /messages?query= -> 200 (0 messages)\27[0m",
+          "09:06:25  INFO   Service stopped after integration checks.",
+        }, "\n")
+      end,
+    } },
+  }
   function fixture.approve(target, value)
     target_ok(target); refs_ok(value)
     fixture.decision = "approved"

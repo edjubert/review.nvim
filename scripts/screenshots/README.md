@@ -19,6 +19,7 @@ Open a particular scene directly:
 
 ```sh
 nvim -c 'luafile scripts/screenshots/demo.lua' -c DemoPipelines
+nvim -c 'luafile scripts/screenshots/demo.lua' -c DemoJobLogs
 nvim -c 'luafile scripts/screenshots/demo.lua' -c DemoInline
 ```
 
@@ -46,6 +47,7 @@ Close Markdown windows with `q`.
 | `:DemoFiles` | `file-search.png` | Sidebar input filtering inbox, 2/5 counter, folders, Git statuses and viewed markers |
 | `:DemoPipelines` | `pipelines.png` | Three pipelines and grouped jobs with five status colors |
 | `:DemoJob` | `pipeline-job.png` | Grouped job picker and simulated failed integration checks log, user, runner, timings and failure reason |
+| `:DemoJobLogs` | `job-log-sources.png` | Source picker with the trace, two artifacts and a custom adapter; preview of a parsed fictional JSONL report |
 | `:DemoRequestChanges` | `request-changes.png` | Standalone change request dialog with Cancel selected |
 | `:DemoInline` | `inline-comments.png` | Comment and reply below the filter range, with reactions |
 | `:DemoResolveAll` | `resolve-all.png` | Warning for two conversations, including an outdated one, initially Cancel |
@@ -55,6 +57,25 @@ Close Markdown windows with `q`.
 `DemoInline` starts with inline comments hidden and invokes `:ReviewToggleComments`.
 The editor title uses diff buffer row numbers; discussion anchors and published
 positions use Git file line numbers.
+
+### Try job log sources
+
+`:DemoJobLogs` highlights `reports/tests.jsonl` without confirming it. The
+configured parser displays its fictional `timestamp`, `level` and `message`
+fields. This schema is an example, not a built-in format.
+
+| Action | Result |
+| --- | --- |
+| Move between sources | Preview the job trace, ANSI worker log, parsed report or application events |
+| Telescope's selection action | Keep the highlighted source and return to the failed job |
+| Escape | Restore the previous source and the `integration checks` job query |
+| `<C-l>` or `:ReviewJobLogs` from jobs | Reopen the source chooser |
+| `<C-r>` or `:ReviewJobRefresh` from jobs | Reload the selected source and fixture metadata |
+
+The application-events adapter returns an in-memory snapshot. The two artifact
+paths are exact fixture files; no archive is downloaded. The launcher's log
+configuration replaces any sources, adapters or parsers from your personal
+configuration. Both `:DemoJob` and `:DemoJobLogs` run in the real Telescope UI.
 
 ## README captures
 
@@ -77,11 +98,14 @@ is made by this launcher.
 | `file-search.png` | File filter in the sidebar |
 | `pipelines.png` | Pipeline details in Telescope |
 | `pipeline-job.png` | Pipeline details in Telescope |
+| `job-log-sources.png` | Custom job logs |
 | `request-changes.png` | Approve or request changes |
 | `inline-comments.png` | Inline discussions |
 | `resolve-all.png` | Resolve GitLab conversations |
 
-The supplied images are kept at their original resolution of 1267 × 1314 pixels.
+The earlier images retain their original resolution of 1267 × 1314 pixels.
+The refreshed job preview and log-source captures use a 150-column, 50-line
+terminal and retain their native resolution of 1050 × 900 pixels.
 The bulk-resolution capture intentionally highlights the resolve action while
 keeping the confirmation dialog open; it does not change the default `Cancel`
 choice when the dialog opens. The images retain the earlier file-filter position
@@ -89,11 +113,12 @@ at the top of the panel. The current UI places it below the review information
 and immediately above the commits. The captured shortcut list at the panel's
 bottom has also moved to the `:ReviewHelp` Telescope picker, accessible through
 the demo's optional `<leader>r?` mapping. The jobs picker now has stage headings
-and previews a simulated job log below its metadata; `pipeline-job.png` keeps
-the earlier metadata-only preview. The log now retains ANSI colors and opens
-at its end. The demo's `<C-r>` mapping, or `:ReviewJobRefresh`, reloads the selected
+and previews a simulated job log below its metadata. The refreshed
+`pipeline-job.png` includes that log with ANSI colors; `job-log-sources.png`
+shows the parsed report in the same picker. Logs open at their end.
+The demo's `<C-r>` mapping, or `:ReviewJobRefresh`, reloads the selected
 job's fixture metadata and log. Automatic pipeline refresh is disabled in this
-demo so scenes stay stable. These captures remain unchanged.
+demo so scenes stay stable.
 
 ### Recapture one scene
 
@@ -135,7 +160,9 @@ It is not a real GitLab page.
 The launcher intercepts GitLab methods before opening it. Process execution is
 limited to fixture Git commands in the temporary repository; Git fetch/clone/push
 and other programs are rejected. Browser actions are recorded locally.
-Job metadata and traces are also supplied by the fixture, without network access.
+Job metadata, traces, artifacts and application events are supplied by the
+fixture, without network access. The example JSONL parser lives in the fixture;
+the plugin itself has no application-specific parser.
 All local drafts and viewed markers use the demo's temporary state directory.
 
 Inspect that directory and the simulated-action log:
@@ -153,18 +180,21 @@ session instead.
 
 - [x] Directory tree shows both expanded and collapsed folders.
 - [x] Complete comparison has exactly five changed files and two viewed files.
-- [ ] Commit scene selects the actual first commit.
-- [ ] Drafts and comment ranges use the exact fixture Git refs.
+- [x] Commit scene selects the actual first commit.
+- [x] Drafts and comment ranges use the exact fixture Git refs.
 - [x] Publication preview shows all three choices.
 - [x] Sidebar filter keeps matching source/test paths and shows 2/5 files.
 - [x] Pipeline preview shows four stages and eight jobs.
 - [x] Success green, failure red, pending orange, running blue, inactive grey.
 - [x] Failed job shows 83 seconds, demo-runner and script_failure.
+- [x] Source chooser previews each highlighted source before confirmation.
+- [x] JSONL report becomes readable text while the worker log retains ANSI colors.
+- [x] Confirm and cancel both restore the selected job and its search.
 - [x] Change request confirmation keeps local drafts.
 - [x] Discussion shows resolved state, participants and reactions.
 - [x] Inline comment, reply and reactions appear below their code range.
 - [x] Bulk resolution warning counts two conversations and includes outdated ones.
 - [x] No private review data appears in screenshots.
-- [x] All captures use the same dimensions.
+- [x] The job preview and log-source captures use the same dimensions.
 - [x] All captures have no transient notifications.
 - [x] Bulk resolution dialog remains open with its warning and both choices visible.
