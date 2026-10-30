@@ -751,7 +751,9 @@ It checks the MR revision and fetches discussions without reactions, files or
 pipeline requests. A warning dialog shows the count and MR number;
 **Cancel** is the first/default choice.
 Confirm explicitly to continue. Newly created conversations after the warning
-are not included.
+are not included. Once all selected conversations are confirmed resolved, a
+completion notification shows their count and the MR number, without waiting
+for reactions to reload.
 
 ![Resolve all confirmation warning for two GitLab conversations including outdated ones, with Cancel and Resolve all choices](assets/screenshots/resolve-all.png)
 

@@ -946,7 +946,7 @@ function Session:reads_pending()
   return false
 end
 
-function Session:resolve_conversations(selected, refs)
+function Session:resolve_conversations(selected, refs, all)
   if self.closed or not ui.valid(self) then self.resolving = false; return end
   self:cancel_reactions()
   self.resolving = true
@@ -964,7 +964,12 @@ function Session:resolve_conversations(selected, refs)
         if old.id == discussion.id then self.data.discussions[index] = result; break end
       end
     end
-    notify(("Resolved %d conversation(s)."):format(count))
+    if all then
+      notify(("ReviewResolveAll complete: %d selected conversation(s) resolved on MR !%d.")
+        :format(#selected, self.target.iid))
+    else
+      notify(("Resolved %d conversation(s)."):format(count))
+    end
     local ok, discussions = pcall(self.provider.discussions, self.target, self.data.mr.diff_refs, self.data.diffs)
     if ok then self.data.discussions = discussions
     else notify("Conversations were resolved, but their refresh failed. Run :ReviewRefresh.", vim.log.levels.WARN) end
@@ -1049,7 +1054,7 @@ function Session:resolve_all()
         .. "This does not verify that the feedback was addressed."):format(#selected),
     }, function(answer)
       if answer == choice and not self.closed and ui.valid(self) then
-        self:resolve_conversations(selected, refs)
+        self:resolve_conversations(selected, refs, true)
       else self.resolving = false end
     end)
   end, function() self.resolving = false end)

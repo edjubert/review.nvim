@@ -200,6 +200,8 @@ COMMANDS
     Recheck the MR revision and each conversation before writing; new or
     edited comments stop resolution so you can refresh and read them.
     Earlier confirmed resolutions remain visible if a later request fails.
+    After all selected conversations are confirmed resolved, notify their
+    count and the MR number without waiting for reactions to reload.
 
 :ReviewClose                                                  *:ReviewClose*
     Close the review tab.

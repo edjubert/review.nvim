@@ -328,8 +328,67 @@ return function(ctx)
         answer("Cancel")
         eq(s.resolving, false); eq(s.reaction_load, nil)
         eq(f.calls, expected); eq(s.error, nil)
+        assert(not table.concat(f.notifications, "\n"):find("ReviewResolveAll complete:", 1, true))
       end)
     end)
+  end)
+
+  test("resolve all confirms complete success before reactions finish and never reports partial success as complete", function()
+    for _, failure in ipairs({ false, true }) do
+      ctx.fixture({}, function(s, f)
+        local first = f.values.discussions[1]
+        first.notes[1].resolvable, first.notes[1].resolved = true, false
+        local second = vim.deepcopy(first)
+        second.id, second.notes[1].id = "second", 2
+        f.values.discussions[2] = second
+        s:load()
+        local network, requests = transport(s), {}
+        s.provider.can_resolve = require("review.providers.gitlab").can_resolve
+        s.provider.resolve = function(_, discussion)
+          local index = #requests + 1
+          local request = { discussion = discussion }
+          requests[index] = request
+          coroutine.yield(function(done) request.done = done end)
+          if failure and index == 2 then error("Resolution failed", 0) end
+          local result = vim.deepcopy(discussion)
+          result.notes[1].resolved = true
+          f.values.discussions[index] = result
+          -- A conversation already resolved by someone else still completes
+          -- the selection, without counting it as a new write.
+          return result, index == 1
+        end
+        local answer, choice
+        local function completed()
+          return table.concat(f.notifications, "\n"):find("ReviewResolveAll complete:", 1, true) ~= nil
+        end
+        mocked({ { vim.ui, "select", function(items, _, callback)
+          answer, choice = callback, items[2]
+        end } }, function()
+          s:resolve_all()
+          assert(answer); eq(completed(), false)
+          answer(choice)
+          eq(#requests, 1); eq(s.resolving, true); eq(completed(), false)
+          requests[1].done()
+          wait(function() return requests[2] ~= nil end)
+          eq(s.data.discussions[1].notes[1].resolved, true)
+          eq(s.resolving, true); eq(completed(), false)
+          requests[2].done()
+          wait(function() return not s.resolving end)
+          eq(completed(), not failure)
+          eq(s.data.discussions[2].notes[1].resolved, not failure)
+          if failure then
+            assert(s.error:find("Resolution failed", 1, true))
+          else
+            eq(f.notifications[#f.notifications],
+              "ReviewResolveAll complete: 2 selected conversation(s) resolved on MR !12.")
+            eq(s.error, nil)
+          end
+          eq(#network.requests, 2); assert(s.reaction_load)
+          network.finish()
+          eq(completed(), not failure)
+        end)
+      end)
+    end
   end)
 
   test("resolve all read failures report the error and allow a later empty read without reactions", function()
