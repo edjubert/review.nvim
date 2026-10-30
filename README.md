@@ -601,9 +601,11 @@ trace is always the first source. Additional sources are opt-in; discovering
 them does not slow down the initial trace preview. Canceling the source chooser
 keeps the current log. Selection, cached content and streaming cursors are kept
 separately for every job and source while browsing the pipeline.
-The source list replaces the job rows in the existing Telescope picker. Select
-a source to return to the job log, or press Escape to cancel. The selected job
-and job search are restored, without opening another `vim.ui.select` window.
+The source list replaces the job rows in the existing Telescope picker. Moving
+between sources previews their logs without changing the confirmed source.
+Select a source to keep it and return to the jobs, or press Escape to restore
+the previous log. Loaded logs are cached; late responses cannot overwrite the
+highlighted source. The selected job and job search are restored.
 
 ```lua
 require("review").setup({

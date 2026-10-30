@@ -634,6 +634,7 @@ function M.pipelines(session, pipelines)
         return
       end
       local buf, job = self.state.bufnr, entry.value
+      local source = entry.log_source or logs.selected(job)
       local previous = current_entry == entry and current_value or nil
       view = view or (automatic and preview_view(self) or nil)
       if automatic and previous and running(pipeline) and previous.job.state == job.state then
@@ -657,11 +658,11 @@ function M.pipelines(session, pipelines)
       -- Automatic refresh reuses the displayed buffer. Keep its contents and
       -- scroll position untouched while the new log is still loading.
       if (not force and not automatic) or not previous then
-        local lines, highlights, definitions = job_preview({ job = job, source = logs.selected(job) })
+        local lines, highlights, definitions = job_preview({ job = job, source = source })
         preview_buffer(buf, lines, highlights, "review-job-log", definitions)
         if automatic then restore_preview(self, buf, lines, view, true, view_wanted) end
       end
-      job_details(job, logs, logs.selected(job), function(value)
+      job_details(job, logs, source, function(value)
         if generation == request then loading = false end
         if poll then
           if automatic and wanted(true) and not poll.focused() then poll.defer() end
@@ -704,6 +705,7 @@ function M.pipelines(session, pipelines)
       source_menu, returning = nil, menu
       menu.item = item
       if item then
+        menu.view = preview_view(current_preview)
         logs.select(menu.entry.value, item)
         current_value = nil
       end
@@ -814,12 +816,15 @@ function M.pipelines(session, pipelines)
         -- Reuse one buffer rather than allocating a log buffer on every tick.
         get_buffer_by_name = function() return "review://job-log" end,
         define_preview = function(self, entry)
-          if source_menu then return end
+          if source_menu then
+            load_preview(self, entry)
+            return
+          end
           if returning then
             if entry ~= returning.entry then return end
             local menu = returning
             returning, choosing = nil, false
-            load_preview(self, entry, menu.item ~= nil, menu.item == nil, menu.view)
+            load_preview(self, entry, false, false, menu.view)
             return
           end
           local automatic, view = entry == preserved_entry, preserved_view

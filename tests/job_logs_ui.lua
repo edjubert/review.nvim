@@ -223,6 +223,84 @@ return function(h)
     end)
   end)
 
+  test("highlighting a log source updates its preview and caches it without confirming the choice", function()
+    local reads = {}
+    fixture({ adapters = { {
+      id = "runs", list = function()
+        return { { id = "a", label = "Run A" }, { id = "b", label = "Run B" } }
+      end,
+      read = function(_, source)
+        reads[source.id] = (reads[source.id] or 0) + 1
+        return "output " .. source.id .. "\n"
+      end,
+    } } }, function(f)
+      f.module.select_job_log(f.session)
+      f.picker:set_selection(1)
+      assert(f.content():find("Log · Run A", 1, true))
+      assert(f.content():find("output a", 1, true))
+      eq(f.picker.prompt_title, "Job #7 log sources")
+      f.picker:set_selection(2)
+      assert(f.content():find("Log · Run B", 1, true))
+      assert(f.content():find("output b", 1, true))
+      f.picker:set_selection(0)
+      assert(f.content():find("original trace", 1, true))
+      f.picker:set_selection(1)
+      eq(reads.a, 1)
+      f.picker.maps["n<Esc>"]()
+      assert(f.content():find("original trace", 1, true))
+      assert(not f.content():find("output a", 1, true))
+      f.choose(3)
+      assert(f.content():find("output b", 1, true))
+      eq(reads.b, 1)
+      f.close()
+    end)
+  end)
+
+  test("a late hovered source cannot overwrite the next highlighted source", function()
+    local finish
+    fixture({ adapters = { {
+      id = "runs", list = function()
+        return { { id = "a", label = "Run A" }, { id = "b", label = "Run B" } }
+      end,
+      read = function(_, source)
+        if source.id == "a" then return coroutine.yield(function(done) finish = done end) end
+        return "output b\n"
+      end,
+    } } }, function(f)
+      f.module.select_job_log(f.session)
+      f.picker:set_selection(1)
+      assert(f.content():find("Log · Run A", 1, true))
+      assert(f.content():find("Loading log", 1, true))
+      f.picker:set_selection(2)
+      assert(f.content():find("output b", 1, true))
+      finish("late output a\n")
+      local settled = false
+      vim.schedule(function() settled = true end)
+      f.wait(function() return settled end)
+      assert(f.content():find("output b", 1, true))
+      assert(not f.content():find("late output a", 1, true))
+      f.picker.maps["n<Esc>"]()
+      assert(f.content():find("original trace", 1, true))
+      f.close()
+    end)
+  end)
+
+  test("the job picker preview follows the highlighted job and its metadata", function()
+    fixture({}, function(f)
+      assert(f.content():find("Job #6", 1, true))
+      assert(f.content():find("trace for job 6", 1, true))
+      f.picker:set_selection(1)
+      assert(f.content():find("Job #7", 1, true))
+      assert(f.content():find("trace for job 7", 1, true))
+      assert(not f.content():find("trace for job 6", 1, true))
+      f.picker:set_selection(0)
+      assert(f.content():find("Job #6", 1, true))
+      f.close()
+    end, nil, { { id = 6, project_id = 23, pipeline_id = 42, name = "another", state = "success", stage = "test" } }, {
+      job_trace = function(_, job) return "trace for job " .. job.id .. "\n" end,
+    })
+  end)
+
   test("pending job metadata still loads the preview while choosing log sources", function()
     local finish, reads = nil, 0
     fixture({ adapters = { {
@@ -323,8 +401,10 @@ return function(h)
       f.wait(function() return settled end)
       assert(f.content():find("original trace", 1, true))
       f.choose(2)
+      eq(reads, 1)
+      f.module.refresh_job(f.session)
       eq(reads, 2)
-      f.wait(function() return f.content():find("Loading log", 1, true) ~= nil end)
+      assert(f.content():find("late output", 1, true), "Refresh should keep the last successful log while loading")
       local buf = f.picker.spec.previewer.state.bufnr
       local before = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
       f.close()

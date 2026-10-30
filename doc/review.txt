@@ -167,8 +167,9 @@ COMMANDS
 
 :ReviewJobLogs                                              *:ReviewJobLogs*
     Choose a log source for the selected job from its Telescope picker or
-    preview. Sources appear in the same Telescope picker; selecting one or
-    pressing Escape restores the jobs, selected job and search query.
+    preview. Sources appear in the same Telescope picker, and moving between
+    them previews their logs. Select a source to keep it, or press Escape to
+    restore the previous log. Both actions restore the selected job and search.
     The standard trace remains the first choice.
     Configure exact GitLab artifact paths or custom adapters with |review-job-logs|.
     Canceling leaves the current source unchanged. Sources are discovered
