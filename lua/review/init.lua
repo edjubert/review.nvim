@@ -3,6 +3,7 @@ local defaults = {
   panel_width = 44,
   inline_comments = false,
   pipeline_refresh_interval = 5000,
+  job_logs = { gitlab = { trace_path = "projects/{project_id}/jobs/{job_id}/trace", artifacts = {} }, adapters = {} },
   keymaps = {
     comment = false, submit = false, refresh = false, info = false, help = false,
     toggle_comments = false, reply = false, open_comment = false,
@@ -14,7 +15,7 @@ local defaults = {
     panel_toggle = false, panel_expand = false, panel_collapse = false,
     panel_collapse_all = false, panel_expand_all = false,
     close_document = false, select_comment = false, save_draft = false,
-    pipeline_open = false, pipeline_back = false, pipeline_refresh = false,
+    pipeline_open = false, pipeline_back = false, pipeline_refresh = false, pipeline_logs = false,
   },
   clone_protocol = "ssh",
   repo = nil,
@@ -30,6 +31,7 @@ function M.setup(opts)
   local interval = M.config.pipeline_refresh_interval
   assert(type(interval) == "number" and interval % 1 == 0 and (interval == 0 or interval >= 1000),
     "pipeline_refresh_interval must be 0 or an integer of at least 1000 milliseconds")
+  require("review.job_logs").validate(M.config.job_logs)
   assert(type(M.config.keymaps) == "table", "keymaps must be a table")
   for name, key in pairs(M.config.keymaps) do
     assert(defaults.keymaps[name] ~= nil, "Unknown keymaps." .. name)
@@ -156,6 +158,14 @@ function M.refresh_job()
   require("review.telescope").refresh_job(M.session)
 end
 
+function M.job_logs()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  require("review.telescope").select_job_log(M.session)
+end
+
 function M.help()
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
@@ -244,6 +254,8 @@ function M._commands()
     { desc = "Browse GitLab MR pipelines, grouped jobs and job logs in Telescope" })
   vim.api.nvim_create_user_command("ReviewJobRefresh", M.refresh_job,
     { desc = "Reload the selected job's metadata and log without using cached results" })
+  vim.api.nvim_create_user_command("ReviewJobLogs", M.job_logs,
+    { desc = "Choose a trace, artifact or custom log for the selected job" })
   vim.api.nvim_create_user_command("ReviewFiles", function(args) M.files(args.args) end,
     { nargs = "*", desc = "Filter changed files in the review panel" })
   vim.api.nvim_create_user_command("ReviewFilesClear", M.clear_files,

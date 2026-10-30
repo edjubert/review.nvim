@@ -170,6 +170,17 @@ COMMANDS
     the optional README example uses <C-r>. It defaults to false.
     All requests are read-only; this command does not rerun the CI job.
 
+:ReviewJobLogs                                              *:ReviewJobLogs*
+    Choose a log source for the selected job from its Telescope picker or
+    preview. Sources appear in the same Telescope picker, and moving between
+    them previews their logs. Select a source to keep it, or press Escape to
+    restore the previous log. Both actions restore the selected job and search.
+    The standard trace remains the first choice.
+    Configure exact GitLab artifact paths or custom adapters with |review-job-logs|.
+    Canceling leaves the current source unchanged. Sources are discovered
+    asynchronously when this command is invoked.
+    Enable keymaps.pipeline_logs for an optional shortcut; it defaults to false.
+
 :ReviewToggleComments                                *:ReviewToggleComments*
     Show or hide discussion messages and replies below their diff lines.
     Keep the chosen state across files, commits and refreshes.
@@ -337,6 +348,7 @@ CONFIGURATION                                                  *review-setup*
       panel_width = 44,
       inline_comments = false,
       pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables
+      job_logs = {}, -- standard trace; see |review-job-logs|
       keymaps = {}, -- all mappings disabled
       clone_protocol = "ssh",
       repo = nil,
@@ -376,12 +388,111 @@ The README includes the same example.
       -- Extra pipeline picker shortcuts, insert/normal mode.
       pipeline_open = "<C-o>", pipeline_back = "<C-b>",
       pipeline_refresh = "<C-r>",
+      pipeline_logs = "<C-l>",
     }
 <
 
 An existing matching repository is used without switching branches.
 Otherwise the plugin fetches a bare repository into cache_dir.
 Local drafts are stored in state_dir/drafts/.
+
+JOB LOG SOURCES                                            *review-job-logs*
+
+Additional sources and parsing are opt-in. The plugin assumes no application
+log schema. Configure sources and parsers in your own Neovim configuration.
+
+>lua
+    job_logs = {
+      gitlab = {
+        trace_path = "projects/{project_id}/jobs/{job_id}/trace",
+        artifacts = { "logs/worker.log", "reports/tests.jsonl" },
+      },
+    }
+<
+
+trace_path must be a relative projects/ GitLab API path; authenticated glab
+GET requests stay on the reviewed host. Placeholders:
+  {project_id}  Job project ID, or the URL-encoded review project path.
+  {project}     URL-encoded review project path.
+  {job_id}      Job ID.
+  {pipeline_id} Pipeline ID.
+Fork jobs use their own project ID. URLs and unknown placeholders are rejected.
+
+artifacts is a list of exact relative paths without globs or traversal. They
+appear for succeeded, failed or canceled jobs and are read individually from
+GitLab's artifacts API. Missing/expired files display an error; the trace stays
+accessible. Custom adapters can discover paths dynamically or read other APIs.
+
+Set job_logs.parse to format structured content. This example uses a fictional
+JSONL schema (timestamp, level, message) and preserves unrecognized lines:
+
+>lua
+    job_logs = {
+      gitlab = { artifacts = { "reports/tests.jsonl" } },
+      parse = function(content, _, source)
+        if source.path ~= "reports/tests.jsonl" then return content end
+        local lines = {}
+        for line in content:gmatch("[^\n]+") do
+          local ok, event = pcall(vim.json.decode, line)
+          if ok and type(event) == "table"
+              and type(event.message) == "string" then
+            lines[#lines + 1] = ("%s [%s] %s"):format(
+              tostring(event.timestamp or ""),
+              tostring(event.level or "info"):upper(), event.message)
+          else
+            lines[#lines + 1] = line
+          end
+        end
+        return table.concat(lines, "\n")
+      end,
+    }
+<
+
+Register an adapter from your configuration or a separate plugin:
+
+>lua
+    job_logs = { adapters = { require("my_ci_logs") } }
+<
+
+Adapters are tables with a unique id containing letters, digits, _ or -.
+gitlab-trace and gitlab-artifacts are reserved IDs. Hooks:
+  match(ctx)                  Optional; return false to skip this adapter.
+  list(ctx)                   Return a list of sources with unique id and an
+                              optional label. Extra fields are passed through.
+  read(ctx, source, cursor)   Return snapshot text or a table with string
+                              content, an optional cursor and mode="replace".
+                              mode="append" adds fragments and requires a
+                              cursor for the next read.
+  parse(content, ctx, source) Optional; return display text, with optional ANSI
+                              styling. Receives the accumulated raw log tail.
+
+ctx includes provider, host, project, project_id when available, pipeline_id,
+job_id and snapshots of target, pipeline and job. ctx.system(argv, opts) runs
+argument-array processes asynchronously and returns stdout or raises on failure.
+Hooks run in review.async coroutines. Keep network/process reads asynchronous;
+do not own timers or buffers. Adapters supply their own authentication, with
+credentials kept out of process arguments and repository configuration.
+
+job_logs.parse is a fallback parser for sources without an adapter parser.
+The default is no transformation. The core renders text/ANSI and handles focused
+polling, manual refresh, errors and per-job/source content and cursors.
+Append cursors survive refresh and source changes; new job IDs start fresh.
+Accumulated raw content retains at most 512 KiB; parsers must tolerate a tail.
+Replacement snapshots reset previous content/cursor. Read failures retain the
+last content/cursor; parser failures display original text with a warning.
+Source discovery errors keep the trace and other sources available.
+Closing the picker releases state and prevents late responses changing its UI.
+
+The fully simulated screenshot demo has trace, artifact, JSONL parser and custom
+adapter sources. From a checkout, using a fresh session with Telescope:
+
+>sh
+    nvim -c 'luafile scripts/screenshots/demo.lua' -c DemoJobLogs
+<
+
+Move the source selection to preview it. Select to keep it and return to jobs;
+Escape restores the previous source, selected job and job search. All demo
+content is fictional and uses no network. See scripts/screenshots/README.md.
 
 FILE FILTER                                                   *review-filter*
 
