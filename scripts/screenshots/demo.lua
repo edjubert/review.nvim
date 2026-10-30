@@ -50,7 +50,9 @@ vim.g.review_screenshot_root = root
 
 local provider = require("review.providers.gitlab")
 for _, name in ipairs({
-  "load", "current", "status", "discussions", "pipelines", "pipeline_details", "job_details", "job_trace",
+  "load", "info", "project", "commits", "diffs", "current", "status",
+  "pipeline_status", "review_status", "discussions", "note_reactions", "pipelines", "pipeline_details",
+  "job_details", "job_trace", "job_artifact",
   "post", "reply", "approve", "request_changes", "resolve", "validate_reply", "validate_request_changes",
 }) do
   provider[name] = fixture[name]
@@ -95,6 +97,8 @@ else
 end
 
 local preferences = vim.deepcopy(review.config)
+-- Demo sources and parsers must never inherit a user's private integrations.
+preferences.job_logs = nil
 local session
 local function wait(predicate, label)
   local done = vim.wait(10000, function() return (session and session.error) or predicate() end, 20)
@@ -144,7 +148,9 @@ local function reset()
     assert(not (session.submitting or session.deciding or session.resolving or session.refreshing),
       "Close the current dialog with Cancel or Keep local before switching scenes.")
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(session.tab)) do
-      if vim.api.nvim_win_get_config(win).relative ~= "" then vim.api.nvim_win_close(win, true) end
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_config(win).relative ~= "" then
+        vim.api.nvim_win_close(win, true)
+      end
     end
     session:close()
   end
@@ -153,6 +159,7 @@ local function reset()
   review.setup(vim.tbl_deep_extend("force", preferences, {
     repo = repo, cache_dir = root .. "/cache", state_dir = root .. "/state",
     panel_width = 44, inline_comments = false, pipeline_refresh_interval = 0,
+    job_logs = fixture.job_logs,
     -- Explicit demo preferences, matching the optional README example.
     keymaps = {
       next_commit = "]c", prev_commit = "[c", next_file = "]f", prev_file = "[f",
@@ -167,6 +174,7 @@ local function reset()
       panel_collapse_all = "zM", panel_expand_all = "zR",
       close_document = "q", select_comment = "<CR>", save_draft = "<C-s>",
       pipeline_open = "<C-o>", pipeline_back = "<C-b>", pipeline_refresh = "<C-r>",
+      pipeline_logs = "<C-l>",
     },
   }))
   review.open(fixture.url)
@@ -214,6 +222,24 @@ local function pipelines()
   end, "pipeline preview")
 end
 
+local function job()
+  pipelines()
+  -- Telescope queues mode keys. Consume them before a scripted picker switch,
+  -- so an old insert-mode "A" cannot become text in the next prompt.
+  vim.api.nvim_feedkeys("", "x", false)
+  local picker = current_picker("demo/inbox !42 pipelines")
+  require("telescope.actions").select_default(picker.prompt_bufnr)
+  wait(function() return current_picker("Pipeline #703 jobs") end, "job picker")
+  current_picker("Pipeline #703 jobs"):reset_prompt("integration checks")
+  wait(function()
+    local selected = require("telescope.actions.state").get_selected_entry()
+    return selected and selected.value.name == "integration checks"
+      and preview_contains("ERROR: Job failed: exit code 1")
+  end, "failed job preview")
+  vim.api.nvim_feedkeys("", "x", false)
+  if current_picker("Pipeline #703 jobs").initial_mode == "insert" then vim.cmd.startinsert() end
+end
+
 local scenes = {
   DemoOverview = function() end,
   DemoCommit = function() display(1) end,
@@ -248,17 +274,23 @@ local scenes = {
       return session.file_tree.count == 2 and vim.api.nvim_get_current_win() == session.filter_win
     end, "filter file tree")
   end,
-  DemoJob = function()
-    pipelines()
-    local picker = current_picker("demo/inbox !42 pipelines")
-    require("telescope.actions").select_default(picker.prompt_bufnr)
-    wait(function() return current_picker("Pipeline #703 jobs") end, "job picker")
-    current_picker("Pipeline #703 jobs"):reset_prompt("integration checks")
+  DemoJob = job,
+  DemoJobLogs = function()
+    job()
+    review.job_logs()
+    wait(function() return current_picker("Job #8106 log sources") end, "log sources")
+    local picker = current_picker("Job #8106 log sources")
+    wait(function() return picker.manager and picker.manager:num_results() == 4 end, "demo sources")
+    for index = 1, picker.manager:num_results() do
+      local entry = picker.manager:get_entry(index)
+      if entry.log_source.data.path == "reports/tests.jsonl" then
+        picker:set_selection(index - 1)
+        break
+      end
+    end
     wait(function()
-      local selected = require("telescope.actions.state").get_selected_entry()
-      return selected and selected.value.name == "integration checks"
-        and preview_contains("ERROR: Job failed: exit code 1")
-    end, "failed job preview")
+      return preview_contains("[ERROR] Expected 24 messages, received 0")
+    end, "parsed test report")
   end,
 }
 
@@ -273,10 +305,15 @@ for name, scene in pairs(scenes) do
       end
     end
     if vim.v.vim_did_enter == 1 then run()
-    else vim.api.nvim_create_autocmd("VimEnter", { once = true, callback = function() vim.schedule(run) end }) end
+    else
+      -- Let the user's startup handlers finish before opening a floating picker.
+      vim.api.nvim_create_autocmd("VimEnter", {
+        once = true, callback = function() vim.defer_fn(run, 100) end,
+      })
+    end
   end, { desc = "Prepare the " .. name .. " screenshot scene" })
 end
 reset()
 vim.g.review_demo_ready = true
-vim.notify("GitLab demo ready: :DemoPipelines, :DemoJob, :DemoRequestChanges, :DemoResolveAll",
+vim.notify("GitLab demo ready: :DemoPipelines, :DemoJob, :DemoJobLogs, :DemoRequestChanges, :DemoResolveAll",
   vim.log.levels.INFO, { title = "screenshot demo" })

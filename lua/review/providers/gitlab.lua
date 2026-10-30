@@ -328,8 +328,15 @@ function M.job_details(target, job)
   return result
 end
 
-function M.job_trace(target, job)
-  return M.request(target, job_path(target, job) .. "/trace", nil, "GET", true)
+function M.job_trace(target, job, path)
+  job_path(target, job)
+  return M.request(target, require("review.job_logs").trace_endpoint(target, job, path), nil, "GET", true)
+end
+
+function M.job_artifact(target, job, path)
+  require("review.job_logs").validate_artifact(path)
+  local encoded = path:gsub("[^/]+", url.encode)
+  return M.request(target, job_path(target, job) .. "/artifacts/" .. encoded, nil, "GET", true)
 end
 
 function M.validate_request_changes(target)
