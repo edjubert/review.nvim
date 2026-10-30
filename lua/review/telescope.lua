@@ -649,7 +649,8 @@ function M.pipelines(session, pipelines)
       local request = generation
       local function wanted(allow_unfocused)
         return picker_open() and selected == job and generation == request
-          and picker:get_selection() == entry and self.state and self.state.bufnr == buf
+          and (picker:get_selection() == entry or (source_menu and source_menu.entry == entry))
+          and self.state and self.state.bufnr == buf
           and (not automatic or allow_unfocused or (poll and poll.focused()))
       end
       local function view_wanted() return wanted(true) end

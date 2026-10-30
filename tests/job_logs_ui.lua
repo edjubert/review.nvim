@@ -1,6 +1,6 @@
 return function(h)
   local test, eq, mocked = h.test, h.eq, h.mocked
-  local function fixture(opts, fn, interval, extra_jobs)
+  local function fixture(opts, fn, interval, extra_jobs, provider_overrides)
     local saved, pickers, buffers, timers, selection, module = {}, {}, {}, {}, nil, nil
     local function buffer()
       local buf = vim.api.nvim_create_buf(false, true)
@@ -78,6 +78,7 @@ return function(h)
       job_trace = function() return "\27[32moriginal trace\27[0m\n" end,
       job_artifact = function() return "artifact output\n" end,
     }
+    for name, value in pairs(provider_overrides or {}) do provider[name] = value end
     local session = {
       config = { keymaps = {}, pipeline_refresh_interval = interval or 0, job_logs = opts },
       target = { provider = "gitlab", project = "group/repo", host = "gitlab.example", iid = 12 },
@@ -220,6 +221,64 @@ return function(h)
       eq(f.picker.spec.finder, finder)
       eq(f.picker.closed, true)
     end)
+  end)
+
+  test("pending job metadata still loads the preview while choosing log sources", function()
+    local finish, reads = nil, 0
+    fixture({ adapters = { {
+      id = "custom", list = function() return { { id = "run", label = "Run log" } } end,
+      read = function() return "custom output\n" end,
+    } } }, function(f)
+      assert(f.content():find("Loading log", 1, true))
+      f.module.select_job_log(f.session)
+      eq(f.picker.prompt_title, "Job #7 log sources")
+      finish()
+      f.wait(function() return f.content():find("loaded after metadata", 1, true) ~= nil end)
+      eq(reads, 1)
+      eq(f.picker.prompt_title, "Job #7 log sources")
+      f.close()
+    end, nil, nil, {
+      job_details = function(_, job)
+        coroutine.yield(function(done) finish = done end)
+        return job
+      end,
+      job_trace = function() reads = reads + 1; return "loaded after metadata\n" end,
+    })
+  end)
+
+  test("a pending log response updates the preview while its source menu is open", function()
+    local finish
+    fixture({}, function(f)
+      assert(f.content():find("Loading log", 1, true))
+      f.module.select_job_log(f.session)
+      finish("loaded while choosing\n")
+      f.wait(function() return f.content():find("loaded while choosing", 1, true) ~= nil end)
+      eq(f.picker.prompt_title, "Job #7 log sources")
+      eq(f.picker.closed, false)
+      f.close()
+    end, nil, nil, {
+      job_trace = function() return coroutine.yield(function(done) finish = done end) end,
+    })
+  end)
+
+  test("confirming the trace before metadata arrives shares the pending load and updates the job preview", function()
+    local finish, reads = nil, 0
+    fixture({}, function(f)
+      f.choose(1)
+      eq(f.picker.prompt_title, "Pipeline #42 jobs")
+      assert(f.content():find("Loading log", 1, true))
+      finish()
+      f.wait(function() return f.content():find("loaded after Enter", 1, true) ~= nil end)
+      eq(reads, 1)
+      assert(not f.content():find("Loading log", 1, true))
+      f.close()
+    end, nil, nil, {
+      job_details = function(_, job)
+        coroutine.yield(function(done) finish = done end)
+        return job
+      end,
+      job_trace = function() reads = reads + 1; return "loaded after Enter\n" end,
+    })
   end)
 
   test("manual log refresh retains streamed output on read errors and shows parser fallback", function()
