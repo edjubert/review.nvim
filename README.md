@@ -123,7 +123,7 @@ With lazy.nvim:
 {
   "edjubert/review.nvim",
   cmd = {
-    "Review", "ReviewInfo", "ReviewHelp", "ReviewPipelines", "ReviewFiles", "ReviewFilesClear", "ReviewFilesPicker",
+    "Review", "ReviewInfo", "ReviewHelp", "ReviewPipelines", "ReviewJobLogs", "ReviewFiles", "ReviewFilesClear", "ReviewFilesPicker",
     "ReviewNextCommit", "ReviewPrevCommit", "ReviewNextFile", "ReviewPrevFile",
     "ReviewNextChange", "ReviewPrevChange", "ReviewComplete", "ReviewPanel",
     "ReviewViewed", "ReviewUnviewed", "ReviewToggleViewed",
@@ -182,6 +182,7 @@ merge base.
 | `:ReviewHelp` | Search commands, configured mappings and their context in Telescope |
 | `:ReviewPipelines` | Browse the GitLab MR's pipelines and jobs in Telescope |
 | `:ReviewJobRefresh` | Reload the selected job's metadata and log in its Telescope picker |
+| `:ReviewJobLogs` | Choose the selected job's trace, a configured artifact or a custom log source |
 | `:ReviewFiles [query]` | Focus the sidebar's live file filter, or apply a query |
 | `:ReviewFilesClear` | Clear the sidebar filter and restore its directory folds |
 | `:ReviewFilesPicker` | Search the current comparison's changed files in Telescope |
@@ -266,6 +267,7 @@ require("review").setup({
     pipeline_open = "<C-o>",
     pipeline_back = "<C-b>",
     pipeline_refresh = "<C-r>",
+    pipeline_logs = "<C-l>",
   },
 })
 ```
@@ -520,6 +522,7 @@ to change these colors and stage headings.
 | Pipelines or jobs | Optional `keymaps.pipeline_open` | Open the selected pipeline or job in GitLab |
 | Jobs | Optional `keymaps.pipeline_back` | Return to the pipeline list |
 | Jobs | `:ReviewJobRefresh` or optional `keymaps.pipeline_refresh` (`<C-r>` in the example) | Reload the selected job's metadata and log, bypassing the cache |
+| Jobs | `:ReviewJobLogs` or optional `keymaps.pipeline_logs` (`<C-l>` in the example) | Choose a log source through `vim.ui.select` |
 
 Telescope's selection variants (default, split, tab and drop) all perform the
 picker action above. Custom selection bindings are supported; pipeline and job
@@ -590,6 +593,96 @@ they have no job trace.
 An unavailable jobs or triggers endpoint is reported in the preview. The command
 only reads GitLab APIs and does not run, retry or cancel jobs.
 Pipeline details for GitHub and Codeberg are not implemented.
+
+### Custom job logs
+
+`:ReviewJobLogs` works from the jobs picker or its preview. The standard job
+trace is always the first source. Additional sources are opt-in; discovering
+them does not slow down the initial trace preview. Canceling the source chooser
+keeps the current log. Selection, cached content and streaming cursors are kept
+separately for every job and source while browsing the pipeline.
+
+```lua
+require("review").setup({
+  job_logs = {
+    gitlab = {
+      trace_path = "projects/{project_id}/jobs/{job_id}/trace",
+      artifacts = { "logs/integration.log", "reports/tests.jsonl" },
+    },
+    adapters = { require("my_ci_logs") },
+  },
+  keymaps = { pipeline_logs = "<C-l>" },
+})
+```
+
+`trace_path` is a relative GitLab API path beginning with `projects/`. It uses
+the reviewed host's authenticated `glab` transport and GET method. Supported
+placeholders are `{project_id}` (the job's project ID, or the encoded review
+project path), `{project}` (the encoded review project path), `{job_id}` and
+`{pipeline_id}`. Fork jobs use their own project ID. URLs and unknown
+placeholders are rejected. Other hosts and authentication mechanisms belong
+in an adapter.
+
+`gitlab.artifacts` lists **exact relative file paths**, without globs or directory
+traversal. These sources appear after the job succeeds, fails or is canceled.
+Selecting one reads that file using GitLab's job artifacts API. It does not
+download or unpack the whole archive. Missing, expired or inaccessible artifacts
+show an error; the job trace remains selectable. Discovering artifact paths
+dynamically can be handled by an adapter.
+
+Adapters are ordinary Lua tables supplied by your configuration or a separate
+plugin. No project-specific service, URL or authentication is bundled:
+
+```lua
+-- lua/my_ci_logs.lua; my-ci-cli is your separately installed, authenticated tool.
+return {
+  id = "external-ci",
+  match = function(ctx)
+    return ctx.provider == "gitlab" and ctx.project == "team/project"
+  end,
+  list = function(ctx)
+    return { { id = "integration", label = "Integration log" } }
+  end,
+  read = function(ctx, source, cursor)
+    local output = ctx.system({
+      "my-ci-cli", "logs", "--job", tostring(ctx.job_id),
+      "--stream", source.id, "--offset", tostring(cursor or 0),
+    })
+    local chunk = vim.json.decode(output)
+    return { content = chunk.content, cursor = chunk.offset, mode = "append" }
+  end,
+}
+```
+
+| Hook | Contract |
+| --- | --- |
+| `id` | Required unique adapter ID using letters, digits, `_` or `-`; `gitlab-trace` and `gitlab-artifacts` are reserved |
+| `match(ctx)` | Optional; return false to skip this adapter for the selected job |
+| `list(ctx)` | Required; return a list of `{ id = "...", label = "..." }` sources. IDs are unique within the adapter; label defaults to ID. Additional fields are passed to `read` and `parse` |
+| `read(ctx, source, cursor)` | Required; return a full text snapshot, or `{ content = "...", cursor = ..., mode = "replace" }`. Use `mode = "append"` for new fragments and include a cursor for the next read |
+| `parse(content, ctx, source)` | Optional; return display text, which can include ANSI styling. Runs on the accumulated, bounded raw log, not just the newest fragment |
+
+`ctx` contains `provider`, `host`, `project`, `project_id` when available,
+`pipeline_id`, `job_id`, and snapshots of `target`, `pipeline` and `job`.
+`ctx.system(argv, opts)` runs an argument-array process asynchronously and
+returns stdout, or raises on failure. Hooks run in `review.async` coroutines;
+use this helper for external processes rather than blocking waits or shell
+commands. Adapters own their authentication. Keep credentials out of process
+arguments and repository configuration.
+
+An optional top-level `job_logs.parse(content, ctx, source)` applies to sources
+without their own parser, including the default trace and artifacts. It defaults
+to no transformation. Parsers return text; `review.nvim` retains control of
+buffers, ANSI rendering, timestamps and preview limits.
+
+The core manages focused polling, manual refresh and pending request sharing
+for the selected source. Append cursors survive refreshes and switching sources;
+new job IDs start fresh. Raw accumulated content retains at most 512 KiB, so a
+parser must tolerate a log tail. A replacement snapshot resets the previous
+content and cursor. Read errors retain the last successful content and cursor;
+parser errors show the original text with a warning. Failed source discovery
+reports the adapter error while keeping the trace and other sources accessible.
+Closing the picker ignores late responses and releases its content and cursors.
 
 ## Comments
 
@@ -852,6 +945,7 @@ require("review").setup({
   panel_width = 44,
   inline_comments = false, -- initially show only discussion markers
   pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables polling
+  job_logs = {},          -- standard trace; optional artifacts, adapters and parser
   keymaps = {},           -- all shortcuts disabled; see Optional buffer mappings
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected

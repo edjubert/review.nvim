@@ -20,6 +20,24 @@ local function run(fn)
   assert(not err, err)
   return result
 end
+local function mocked(overrides, fn)
+  local saved = {}
+  for _, override in ipairs(overrides) do
+    saved[#saved + 1] = { override[1], override[2], override[1][override[2]] }
+    override[1][override[2]] = override[3]
+  end
+  local ok, err = xpcall(fn, debug.traceback)
+  for _, original in ipairs(saved) do original[1][original[2]] = original[3] end
+  assert(ok, err)
+end
+
+if arg[1] == "logs" then
+  dofile("tests/job_logs.lua")({ test = test, eq = eq, raises = raises, mocked = mocked, run = run })
+  dofile("tests/job_logs_ui.lua")({ test = test, eq = eq, mocked = mocked })
+  print(("%d passed, %d failed"):format(passed, failed))
+  if failed > 0 then vim.cmd("cquit 1") end
+  return
+end
 
 local url = require("review.url")
 local diff = require("review.diff")
@@ -823,17 +841,6 @@ local function reply_fixture(opts)
     if note then note.id = 100 + index end
   end
   return s
-end
-
-local function mocked(overrides, fn)
-  local saved = {}
-  for _, override in ipairs(overrides) do
-    saved[#saved + 1] = { override[1], override[2], override[1][override[2]] }
-    override[1][override[2]] = override[3]
-  end
-  local ok, err = xpcall(fn, debug.traceback)
-  for _, original in ipairs(saved) do original[1][original[2]] = original[3] end
-  assert(ok, err)
 end
 
 local function comment_url_fixture(opts)
@@ -1878,6 +1885,13 @@ dofile("tests/reactions_resolution.lua")({
   test = test, eq = eq, raises = raises, mocked = mocked,
   provider = provider, ui = ui, refs = refs, target = target, url = url, drafts = drafts,
   fixture = comment_url_fixture, comment_marks = comment_marks, virtual_text = virtual_text,
+})
+
+dofile("tests/job_logs.lua")({
+  test = test, eq = eq, raises = raises, mocked = mocked, run = run,
+})
+dofile("tests/job_logs_ui.lua")({
+  test = test, eq = eq, mocked = mocked,
 })
 
 provider.status = actual_gitlab_status

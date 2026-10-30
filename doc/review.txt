@@ -165,6 +165,14 @@ COMMANDS
     the optional README example uses <C-r>. It defaults to false.
     All requests are read-only; this command does not rerun the CI job.
 
+:ReviewJobLogs                                              *:ReviewJobLogs*
+    Choose a log source for the selected job from its Telescope picker or
+    preview using vim.ui.select. The standard trace remains the first choice.
+    Configure exact GitLab artifact paths or custom adapters with |review-job-logs|.
+    Canceling leaves the current source unchanged. Sources are discovered
+    asynchronously when this command is invoked.
+    Enable keymaps.pipeline_logs for an optional shortcut; it defaults to false.
+
 :ReviewToggleComments                                *:ReviewToggleComments*
     Show or hide discussion messages and replies below their diff lines.
     Keep the chosen state across files, commits and refreshes.
@@ -309,6 +317,7 @@ CONFIGURATION                                                  *review-setup*
       panel_width = 44,
       inline_comments = false,
       pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables
+      job_logs = {}, -- standard trace; see |review-job-logs|
       keymaps = {}, -- all mappings disabled
       clone_protocol = "ssh",
       repo = nil,
@@ -348,12 +357,68 @@ The README includes the same example.
       -- Extra pipeline picker shortcuts, insert/normal mode.
       pipeline_open = "<C-o>", pipeline_back = "<C-b>",
       pipeline_refresh = "<C-r>",
+      pipeline_logs = "<C-l>",
     }
 <
 
 An existing matching repository is used without switching branches.
 Otherwise the plugin fetches a bare repository into cache_dir.
 Local drafts are stored in state_dir/drafts/.
+
+JOB LOG SOURCES                                            *review-job-logs*
+
+>lua
+    job_logs = {
+      gitlab = {
+        trace_path = "projects/{project_id}/jobs/{job_id}/trace",
+        artifacts = { "logs/integration.log", "reports/tests.jsonl" },
+      },
+      adapters = { require("my_ci_logs") },
+      -- parse = function(content, ctx, source) return content end,
+    }
+<
+
+trace_path must be a relative projects/ GitLab API path; authenticated glab
+GET requests stay on the reviewed host. Placeholders:
+  {project_id}  Job project ID, or the URL-encoded review project path.
+  {project}     URL-encoded review project path.
+  {job_id}      Job ID.
+  {pipeline_id} Pipeline ID.
+Fork jobs use their own project ID. URLs and unknown placeholders are rejected.
+
+artifacts is a list of exact relative paths without globs or traversal. They
+appear for succeeded, failed or canceled jobs and are read individually from
+GitLab's artifacts API. Missing/expired files display an error; the trace stays
+accessible. Custom adapters can discover paths dynamically or read other APIs.
+
+Adapters are tables with a unique id containing letters, digits, _ or -.
+gitlab-trace and gitlab-artifacts are reserved IDs. Hooks:
+  match(ctx)                  Optional; return false to skip this adapter.
+  list(ctx)                   Return a list of sources with unique id and an
+                              optional label. Extra fields are passed through.
+  read(ctx, source, cursor)   Return snapshot text or a table with string
+                              content, an optional cursor and mode="replace".
+                              mode="append" adds fragments and requires a
+                              cursor for the next read.
+  parse(content, ctx, source) Optional; return display text, with optional ANSI
+                              styling. Receives the accumulated raw log tail.
+
+ctx includes provider, host, project, project_id when available, pipeline_id,
+job_id and snapshots of target, pipeline and job. ctx.system(argv, opts) runs
+argument-array processes asynchronously and returns stdout or raises on failure.
+Hooks run in review.async coroutines. Keep network/process reads asynchronous;
+do not own timers or buffers. Adapters supply their own authentication, with
+credentials kept out of process arguments and repository configuration.
+
+job_logs.parse is a fallback parser for sources without an adapter parser.
+The default is no transformation. The core renders text/ANSI and handles focused
+polling, manual refresh, errors and per-job/source content and cursors.
+Append cursors survive refresh and source changes; new job IDs start fresh.
+Accumulated raw content retains at most 512 KiB; parsers must tolerate a tail.
+Replacement snapshots reset previous content/cursor. Read failures retain the
+last content/cursor; parser failures display original text with a warning.
+Source discovery errors keep the trace and other sources available.
+Closing the picker releases state and prevents late responses changing its UI.
 
 FILE FILTER                                                   *review-filter*
 

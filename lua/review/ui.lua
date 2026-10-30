@@ -301,6 +301,8 @@ function M.help(session)
     add("Return to pipelines", "pipeline_back", "Return from the jobs picker to its pipelines", "Jobs picker")
     add(":ReviewJobRefresh", "pipeline_refresh", "Reload the selected job's metadata and colored log; show the end",
       "Jobs picker; command also works in the job preview")
+    add(":ReviewJobLogs", "pipeline_logs", "Choose the job trace, an artifact or a custom log source",
+      "Jobs picker; command also works in the job preview")
   end
   if session.provider.resolve then
     add(":ReviewResolve", false, "Resolve the selected conversation immediately", "Diff / discussion window")

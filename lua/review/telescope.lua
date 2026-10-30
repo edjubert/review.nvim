@@ -436,21 +436,28 @@ local function job_preview(value)
     lines[#lines + 1] = "Details unavailable: " .. text(value.details_error)
     highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
   end
-  lines[#lines + 1], lines[#lines + 2] = "", "Log"
+  local label = value.source and value.source.label
+  lines[#lines + 1], lines[#lines + 2] = "", label and ("Log · " .. label) or "Log"
   highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineHeading" }
   if value.log_error then
     lines[#lines + 1] = "Log unavailable: " .. text(value.log_error)
     highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
-  elseif value.unavailable then
+  end
+  if value.parse_error then
+    lines[#lines + 1] = "Parser failed; showing original log: " .. text(value.parse_error)
+    highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
+  end
+  if value.unavailable then
     lines[#lines + 1] = value.unavailable
   elseif value.trace == nil then
-    lines[#lines + 1] = "Loading log…"
+    if not value.log_error then lines[#lines + 1] = "Loading log…" end
   elseif value.trace == "" then
-    lines[#lines + 1] = type(job.erased_at) == "string" and job.erased_at ~= ""
+    lines[#lines + 1] = (not value.source or value.source.key == "gitlab-trace/trace")
+      and type(job.erased_at) == "string" and job.erased_at ~= ""
       and "This job's log has been erased." or "No log is available for this job."
   else
     local output, truncated, colors, styles = log_lines(value.trace)
-    if truncated then
+    if truncated or value.truncated then
       lines[#lines + 1] = "Showing the log tail (preview limited to 5000 lines / 512 KiB)."
       highlights[#highlights + 1] = { line = #lines, group = "ReviewStatusWarn" }
     end
@@ -474,6 +481,17 @@ function M.refresh_job(session)
     end
   end
   notify("Use :ReviewJobRefresh in a job's Telescope picker.", vim.log.levels.WARN)
+end
+
+function M.select_job_log(session)
+  local buf = vim.api.nvim_get_current_buf()
+  for _, preview in pairs(job_previews) do
+    if preview.session == session and preview.valid() and preview.contains(buf) then
+      preview.select_log()
+      return
+    end
+  end
+  notify("Use :ReviewJobLogs in a job's Telescope picker.", vim.log.levels.WARN)
 end
 
 function M.pipelines(session, pipelines)
@@ -511,8 +529,8 @@ function M.pipelines(session, pipelines)
       if entry.pending then finish(nil, err) else notify(err, vim.log.levels.ERROR) end
     end)
   end
-  local function job_details(job, done, wanted, force)
-    local key = tostring(job.project_id or session.target.project) .. "/" .. job.id
+  local function job_details(job, logs, source, done, wanted, force)
+    local key = tostring(job.project_id or session.target.project) .. "/" .. job.id .. "/" .. source.key
     local cached = job_cache[key]
     if cached then
       if cached.pending then
@@ -524,7 +542,7 @@ function M.pipelines(session, pipelines)
       local erased = cached.value and type(cached.value.job.erased_at) == "string"
         and cached.value.job.erased_at ~= ""
       if not force and cached.value and not cached.value.deferred
-          and ((finished and not cached.value.log_error and not cached.value.details_error
+          and ((finished and not cached.value.log_error and not cached.value.parse_error and not cached.value.details_error
               and (cached.value.trace ~= "" or erased))
             or vim.uv.now() - cached.updated < 3000) then
         done(cached.value)
@@ -540,7 +558,7 @@ function M.pipelines(session, pipelines)
       for _, callback in ipairs(callbacks) do callback.done(value) end
     end
     async.run(function()
-      local value = { job = job }
+      local value = { job = job, source = source }
       if job.trigger then
         value.unavailable = "Downstream triggers do not have job logs. Open their downstream pipeline to inspect its jobs."
         finish(value)
@@ -554,18 +572,13 @@ function M.pipelines(session, pipelines)
       for _, callback in ipairs(cached.callbacks) do if callback.wanted() then active = true; break end end
       if not session_open() or not active then
         value.deferred = true
-      elseif type(value.job.erased_at) == "string" and value.job.erased_at ~= "" then
-        value.trace = ""
-      elseif session.provider.job_trace then
-        local ok, trace = pcall(session.provider.job_trace, session.target, value.job)
-        if ok and type(trace) == "string" then value.trace = trace
-        else value.log_error = ok and "The provider returned an invalid job log." or tostring(trace) end
       else
-        value.unavailable = "Job logs are not available for this provider."
+        local result = logs.read(value.job, source)
+        for name, field in pairs(result) do value[name] = field end
       end
       finish(value)
     end, function(err)
-      if cached.pending then finish({ job = job, log_error = tostring(err) })
+      if cached.pending then finish({ job = job, source = source, log_error = tostring(err) })
       elseif session_open() then notify(err, vim.log.levels.ERROR) end
     end)
   end
@@ -583,6 +596,7 @@ function M.pipelines(session, pipelines)
     end
     local prompt, selected, generation, picker = nil, nil, 0, nil
     local current_preview, current_entry, current_value, loading, poll
+    local logs, choosing = require("review.job_logs").new(session, pipeline), false
     local preserved_entry, preserved_view, preserved_results, refresh_error
     local entries = {}
     local function picker_open()
@@ -640,12 +654,12 @@ function M.pipelines(session, pipelines)
       local function view_wanted() return wanted(true) end
       -- Automatic refresh reuses the displayed buffer. Keep its contents and
       -- scroll position untouched while the new log is still loading.
-      if (not force and not automatic) or (automatic and not previous) then
-        local lines, highlights, definitions = job_preview({ job = job })
+      if (not force and not automatic) or not previous then
+        local lines, highlights, definitions = job_preview({ job = job, source = logs.selected(job) })
         preview_buffer(buf, lines, highlights, "review-job-log", definitions)
         if automatic then restore_preview(self, buf, lines, view, true, view_wanted) end
       end
-      job_details(job, function(value)
+      job_details(job, logs, logs.selected(job), function(value)
         if generation == request then loading = false end
         if poll then
           if automatic and wanted(true) and not poll.focused() then poll.defer() end
@@ -673,8 +687,47 @@ function M.pipelines(session, pipelines)
         load_preview(current_preview, entry, true)
       end
     end
+    local function select_log()
+      local entry = picker:get_selection()
+      if not entry or not current_preview or not current_preview.state or current_entry ~= entry then
+        notify("Select a job to choose its logs.", vim.log.levels.WARN)
+        return
+      end
+      if entry.value.trigger then
+        notify("Downstream triggers do not have job logs.", vim.log.levels.WARN)
+        return
+      end
+      if choosing then notify("Log sources are already loading."); return end
+      choosing = true
+      local request = generation
+      local job = current_value and current_value.job or entry.value
+      local function wanted()
+        return picker_open() and picker:get_selection() == entry and generation == request
+      end
+      async.run(function()
+        local sources, errors = logs.list(job)
+        if not wanted() then choosing = false; return end
+        if #errors > 0 then notify("Some log sources are unavailable: " .. table.concat(errors, "\n"), vim.log.levels.WARN) end
+        vim.ui.select(sources, {
+          prompt = "Job #" .. entry.value.id .. " log source:",
+          format_item = function(item) return item.label end,
+        }, function(item)
+          choosing = false
+          if item and wanted() then
+            logs.select(entry.value, item)
+            current_value = nil
+            load_preview(current_preview, entry, true)
+          end
+          if poll then poll.update() end
+        end)
+      end, function(err)
+        choosing = false
+        if wanted() then notify("Log sources unavailable: " .. text(err), vim.log.levels.WARN) end
+        if poll then poll.update() end
+      end)
+    end
     local function auto_refresh(done)
-      if loading then poll.defer(); done(); return end
+      if loading or choosing then poll.defer(); done(); return end
       details(pipeline, function(result, err)
         if not poll.focused() then
           if picker_open() then poll.defer() end
@@ -706,6 +759,7 @@ function M.pipelines(session, pipelines)
       results_title = "Select: browser"
         .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or "")
         .. (keymaps.pipeline_back and " · " .. keymaps.pipeline_back .. ": pipelines" or "")
+        .. (keymaps.pipeline_logs and " · " .. keymaps.pipeline_logs .. ": log sources" or "")
         .. (keymaps.pipeline_refresh and " · " .. keymaps.pipeline_refresh .. ": refresh log" or ""),
       finder = finder(),
       sorter = grouped_job_sorter(),
@@ -727,12 +781,14 @@ function M.pipelines(session, pipelines)
         teardown = function()
           if poll then poll.close() end
           if prompt then job_previews[prompt] = nil end
+          logs.close()
+          job_cache = {}
         end,
       }),
       attach_mappings = function(prompt_bufnr, map)
         prompt = prompt_bufnr
         job_previews[prompt] = {
-          session = session, valid = picker_open, refresh = refresh,
+          session = session, valid = picker_open, refresh = refresh, select_log = select_log,
           contains = contains,
         }
         poll = focused_poll(interval, prompt, picker_open, contains, function() return running(pipeline) end,
@@ -745,6 +801,7 @@ function M.pipelines(session, pipelines)
         for _, mode in ipairs({ "i", "n" }) do
           if keymaps.pipeline_open then map(mode, keymaps.pipeline_open, open) end
           if keymaps.pipeline_refresh then map(mode, keymaps.pipeline_refresh, refresh) end
+          if keymaps.pipeline_logs then map(mode, keymaps.pipeline_logs, select_log) end
           if keymaps.pipeline_back then
             map(mode, keymaps.pipeline_back, function()
               telescope.actions.close(prompt_bufnr)
