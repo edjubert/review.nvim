@@ -26,7 +26,7 @@ return function(ctx)
       project = { ssh_url_to_repo = "git@gitlab.example:group/nested/repo.git" },
       commits = { { id = "head", parent_ids = { "base" }, title = "Change" } },
       diffs = { { old_path = "code.lua", new_path = "code.lua", diff = "@@ -1 +1 @@\n-a\n+b" } },
-      discussions = { discussion },
+      discussions = { vim.deepcopy(discussion) },
       pipeline = { state = "success" },
       review = { state = "approved", approvals = 1 },
       current = { diff_refs = vim.deepcopy(refs) },
@@ -433,4 +433,10 @@ return function(ctx)
       assert(ok, name .. ": " .. tostring(err))
     end
   end)
+
+  dofile("tests/background_reactions.lua")({
+    test = test, eq = eq, run = run, fixture = fixture,
+    refs = refs, discussion = discussion, wait = wait, text = text,
+    ui = ctx.ui, git = ctx.git, target = ctx.target, note_reactions = ctx.note_reactions,
+  })
 end

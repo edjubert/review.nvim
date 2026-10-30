@@ -29,11 +29,14 @@ local drafts = require("review.drafts")
 local git = require("review.git")
 local provider = require("review.providers.gitlab")
 local actual_gitlab_status = provider.status
+local actual_gitlab_note_reactions = provider.note_reactions
 -- Existing fixtures simulate comments/diffs; status-specific tests below use
 -- the real method with mocked API responses. Never contact a live status API.
 provider.status = function()
   return { pipeline = { state = "none" }, review = { state = "pending", approvals = 0, reviewers = {} } }
 end
+-- Session fixtures must never reach a live reaction transport.
+provider.note_reactions = function() return {} end
 local Session = require("review.session")
 local ui = require("review.ui")
 local emoji = require("review.emoji")
@@ -56,10 +59,12 @@ local file = { old_path = "old.txt", new_path = "new.txt" }
 dofile("tests/progressive_loading.lua")({
   test = test, eq = eq, raises = raises, run = run,
   Session = Session, ui = ui, git = git, config = config, target = target,
+  note_reactions = actual_gitlab_note_reactions,
 })
 
 if arg[1] == "progressive" then
   provider.status = actual_gitlab_status
+  provider.note_reactions = actual_gitlab_note_reactions
   vim.fn.delete(root, "rf")
   print(("%d passed, %d failed"):format(passed, failed))
   if failed > 0 then vim.cmd("cquit 1") end
@@ -1875,12 +1880,14 @@ test("a failed status read after approval does not report a failed approval", fu
 end)
 
 dofile("tests/reactions_resolution.lua")({
-  test = test, eq = eq, raises = raises, mocked = mocked,
+  test = test, eq = eq, raises = raises, mocked = mocked, run = run,
+  note_reactions = actual_gitlab_note_reactions,
   provider = provider, ui = ui, refs = refs, target = target, url = url, drafts = drafts,
   fixture = comment_url_fixture, comment_marks = comment_marks, virtual_text = virtual_text,
 })
 
 provider.status = actual_gitlab_status
+provider.note_reactions = actual_gitlab_note_reactions
 vim.fn.delete(root, "rf")
 print(("%d passed, %d failed"):format(passed, failed))
 if failed > 0 then vim.cmd("cquit 1") end

@@ -6,6 +6,7 @@ local position = require("review.position")
 local drafts = require("review.drafts")
 local viewed = require("review.viewed")
 local threads = require("review.threads")
+local reactions = require("review.reactions")
 local tree = require("review.tree")
 local ui = require("review.ui")
 local Session = {}
@@ -21,6 +22,7 @@ function Session.new(target, config)
     provider = providers.for_target(target),
     inline_comments = config.inline_comments == true,
     thread_documents = {}, thread_views = {},
+    reaction_limiter = reactions.limiter(),
     directory_folds = {}, file_filter = "",
     commit_index = 0, files = {}, closed = false, generation = 0,
   }, Session)
@@ -73,6 +75,73 @@ function Session:update_status()
   ui.panel(self)
 end
 
+function Session:cancel_reactions()
+  local batch = self.reaction_load
+  if not batch then return end
+  self.reaction_load = nil
+  if batch.state then batch.state.pending.reactions = nil end
+  for _, discussion in ipairs(batch.discussions) do
+    for _, note in ipairs(discussion.notes or {}) do note.reactions_loading = nil end
+  end
+  if ui.valid(self) then
+    if self.data == batch.data and self.data.discussions == batch.discussions then
+      self:update_discussion_views(true)
+    end
+    ui.panel(self)
+  end
+end
+
+function Session:load_reactions(data)
+  self:cancel_reactions()
+  if not data or not self.provider.note_reactions or not ui.valid(self) then return end
+  local batch = { data = data, discussions = data.discussions, state = self.load_state }
+  self.reaction_load = batch
+  local function active()
+    return self.reaction_load == batch and ui.valid(self)
+      and self.load_state == batch.state and data.discussions == batch.discussions
+      and (not batch.state or not batch.state.failed or batch.state.data ~= data)
+  end
+  if batch.state then
+    batch.state.pending.reactions, batch.state.errors.reactions = true, nil
+  end
+  async.run(function()
+    local failures = reactions.load(self.provider, self.target, batch.discussions, {
+      active = active,
+      limiter = self.reaction_limiter,
+      on_update = function()
+        -- Coalesce responses from the same loop iteration. Reaction changes do
+        -- not move anchors, so repainting them must never trigger more Git reads.
+        if batch.ui_pending then return end
+        batch.ui_pending = true
+        vim.schedule(function()
+          batch.ui_pending = nil
+          if active() and self.data == data then self:update_discussion_views(true) end
+        end)
+      end,
+    })
+    if not active() then return end
+    if batch.state then
+      batch.state.pending.reactions = nil
+      batch.state.errors.reactions = failures > 0 and "Some reactions are unavailable." or nil
+    end
+    if self.data == data then self:update_discussion_views(true) end
+    self.reaction_load = nil
+    ui.panel(self)
+  end, function(err)
+    if not active() then return end
+    for _, discussion in ipairs(batch.discussions) do
+      for _, note in ipairs(discussion.notes or {}) do
+        if note.reactions_loading then note.reactions_loading, note.reactions_error = nil, err end
+      end
+    end
+    self:cancel_reactions()
+    if batch.state then batch.state.errors.reactions = err end
+    if self.data == data then self:update_discussion_views(true) end
+    ui.panel(self)
+    notify("Reactions could not be loaded: " .. err, vim.log.levels.WARN)
+  end)
+end
+
 function Session:refresh()
   if not ui.valid(self) then
     notify("Open a review with :Review first.", vim.log.levels.WARN)
@@ -98,6 +167,7 @@ function Session:refresh()
       and vim.api.nvim_win_get_cursor(self.viewer_win) or nil,
     panel_focused = vim.api.nvim_get_current_win() == self.panel_win,
   }
+  self:cancel_reactions()
   self.refreshing = true
   self.generation = self.generation + 1
   local generation = self.generation
@@ -194,7 +264,8 @@ function Session:refresh()
     return self.provider.discussions(self.target, mr.diff_refs, files)
   end, function(data, result)
     data.discussions = result
-    if self.data == data and self.ready and not self.refreshing then self:update_discussion_views() end
+    if self.data == data then self:update_discussion_views(not self.ready or self.refreshing) end
+    self:load_reactions(data)
   end)
   for _, name in ipairs({ "pipeline", "review" }) do
     section(name, { references }, function()
@@ -238,6 +309,7 @@ function Session:refresh()
       end
     end
     if loading.pending.discussions then loading.errors.discussions = err end
+    self:cancel_reactions()
     loading.failed, loading.pending, loading.errors.files = true, {}, err
     self.refreshing, self.files_loading = false, false
     ui.panel(self)
@@ -246,6 +318,7 @@ function Session:refresh()
     if self.ready and not self.current and not self.closed then
       self:select_commit(self.commit_index, selection)
     end
+    if self.ready then self:load_reactions(self.data) end
   end, generation)
 end
 
@@ -790,6 +863,26 @@ function Session:update_discussion_views(skip_mapping)
   ui.comments(self)
   for buf, view in pairs(self.thread_views) do
     if vim.api.nvim_buf_is_valid(buf) then
+      local old_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      local old_comments, cursors = self.thread_documents[buf] or {}, {}
+      local function same_note(a, b)
+        return a and b and (a == b or (a.id ~= nil and a.id ~= vim.NIL and a.id == b.id))
+      end
+      for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+        local cursor = vim.api.nvim_win_get_cursor(win)
+        local note, first, occurrence = old_comments[cursor[1]], nil, 0
+        for row = 1, cursor[1] do
+          if same_note(old_comments[row], note) then
+            first = first or row
+            if old_lines[row] == old_lines[cursor[1]] then occurrence = occurrence + 1 end
+          end
+        end
+        cursors[#cursors + 1] = {
+          win = win, row = cursor[1], note = note, text = old_lines[cursor[1]],
+          offset = first and cursor[1] - first, occurrence = occurrence,
+          view = vim.api.nvim_win_call(win, vim.fn.winsaveview),
+        }
+      end
       local selected = {}
       for _, discussion in ipairs(self.data.discussions) do
         if not view.ids or view.ids[discussion.id] then selected[#selected + 1] = discussion end
@@ -800,6 +893,29 @@ function Session:update_discussion_views(skip_mapping)
       for key, entry in pairs(entries) do view.entries[key] = entry end
       self.thread_documents[buf] = comments
       ui.update_document(buf, lines, self:discussion_empty())
+      for _, cursor in ipairs(cursors) do
+        if vim.api.nvim_win_is_valid(cursor.win) then
+          local first, row, occurrence = nil, nil, 0
+          for index, note in ipairs(comments) do
+            if same_note(note, cursor.note) then
+              first = first or index
+              if lines[index] == cursor.text then
+                occurrence = occurrence + 1
+                if occurrence == cursor.occurrence then row = index; break end
+              end
+            end
+          end
+          if not row and first then
+            local relative = first + cursor.offset
+            row = same_note(comments[relative], cursor.note) and relative or first
+          end
+          row = row or math.min(cursor.row, math.max(1, #lines))
+          local saved = cursor.view
+          saved.lnum, saved.topline = row, math.max(1, saved.topline + row - cursor.row)
+          saved.col = math.min(saved.col, math.max(0, #(lines[row] or "") - 1))
+          vim.api.nvim_win_call(cursor.win, function() vim.fn.winrestview(saved) end)
+        end
+      end
     end
   end
 end
@@ -821,15 +937,18 @@ end
 -- Keep a late read from replacing the result of an explicit write.
 function Session:reads_pending()
   local loading = self.load_state
-  if loading and next(loading.pending) then
-    notify("Wait for comments and review statuses to finish loading.", vim.log.levels.WARN)
-    return true
+  for name in pairs(loading and loading.pending or {}) do
+    if name ~= "reactions" then
+      notify("Wait for comments and review statuses to finish loading.", vim.log.levels.WARN)
+      return true
+    end
   end
   return false
 end
 
 function Session:resolve_conversations(selected, refs)
   if self.closed or not ui.valid(self) then self.resolving = false; return end
+  self:cancel_reactions()
   self.resolving = true
   local count = 0
   self:task(function()
@@ -851,12 +970,14 @@ function Session:resolve_conversations(selected, refs)
     else notify("Conversations were resolved, but their refresh failed. Run :ReviewRefresh.", vim.log.levels.WARN) end
     self:update_discussion_views()
     self.resolving = false
+    self:load_reactions(self.data)
   end, function(err)
     self.resolving = false
     notify(("Resolution stopped after %d confirmed conversation(s). Check %s before retrying. %s")
       :format(count, self.provider.name, err), vim.log.levels.WARN)
     -- Keep successful results visible even if a later conversation failed.
     self:task(function() self:update_discussion_views() end)
+    self:load_reactions(self.data)
   end)
 end
 
@@ -1051,6 +1172,7 @@ function Session:submit()
   local function publish(request_changes, summary)
     if self.closed or self.submitting or self.deciding or self.resolving or self.refreshing then return end
     if self:reads_pending() then return end
+    self:cancel_reactions()
     self.submitting = true
     local count, requesting = 0, false
     self:task(function()
@@ -1111,12 +1233,13 @@ function Session:submit()
       notify(("Published %d comment(s)%s."):format(count, request_changes and " and requested changes" or ""))
       self:update_status()
       self.data.discussions = self.provider.discussions(self.target, self.data.mr.diff_refs, self.data.diffs)
-      if self.current and self.current.rows then self:map_threads(self.current, self.generation) end
+      self:update_discussion_views()
       ui.panel(self)
-      ui.comments(self)
       self.submitting = false
+      self:load_reactions(self.data)
     end, function(err)
       self.submitting = false
+      self:load_reactions(self.data)
       if requesting then
         notify(("Published %d comment(s); Request changes was not confirmed. Check %s before retrying. %s")
           :format(count, self.provider.name, err), vim.log.levels.WARN)
@@ -1209,6 +1332,7 @@ function Session:close()
     return
   end
   self.closed = true
+  self:cancel_reactions()
   ui.close(self)
   if self.tab and vim.api.nvim_tabpage_is_valid(self.tab) then
     local tabs = vim.api.nvim_list_tabpages()

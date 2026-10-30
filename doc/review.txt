@@ -14,7 +14,12 @@ without waiting for comments or statuses. Pending sections display "loading…";
 late comments update the current diff and open discussion windows.
 Unavailable comment/status endpoints leave diffs readable. :ReviewRefresh
 retries these reads. Explicit publication, decisions and resolution wait for
-outstanding reads to finish.
+pending comment/status reads. GitLab and Codeberg reactions load independently,
+with at most four requests in flight per review, including across refreshes.
+Comments appear before their reactions; pending reactions show
+"Reactions loading…". Late reactions preserve the selected comment and cursor.
+Unavailable reactions leave comments readable and do not block other reactions.
+Publication, decisions and resolution do not wait for reactions.
 
 Requires Neovim 0.11+, git, and the API client for the review host:
 authenticated glab for GitLab, authenticated gh for GitHub, curl for Codeberg.

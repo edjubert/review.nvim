@@ -1,5 +1,74 @@
 local emoji = require("review.emoji")
+local async = require("review.async")
 local M = {}
+local concurrency = 4
+
+-- Reuse this limiter across refreshes: canceled reads still occupy their slots
+-- until their transports return, rather than allowing the next batch to exceed
+-- the limit while old requests are in flight.
+function M.limiter()
+  return { running = 0, waiting = {} }
+end
+
+local function acquire(limiter)
+  if limiter.running < concurrency then
+    limiter.running = limiter.running + 1
+  else
+    coroutine.yield(function(done) limiter.waiting[#limiter.waiting + 1] = done end)
+  end
+end
+
+local function release(limiter)
+  local done = table.remove(limiter.waiting, 1)
+  if done then done()
+  else limiter.running = limiter.running - 1 end
+end
+
+-- Reaction endpoints are optional reads. Limit simultaneous requests and check
+-- the snapshot again after each read before applying anything to its notes.
+function M.load(provider, target, discussions, opts)
+  opts = opts or {}
+  if not provider.note_reactions then return 0 end
+  local function active() return not opts.active or opts.active() end
+  if not active() then return 0 end
+  local notes = {}
+  for _, discussion in ipairs(discussions) do
+    for _, note in ipairs(discussion.notes or {}) do
+      if not note.system and type(note.id) == "number" and note.id > 0 and note.id % 1 == 0 then
+        note.reactions_loading = true
+        notes[#notes + 1] = note
+      end
+    end
+  end
+  if #notes == 0 then return 0 end
+  if opts.on_update then opts.on_update() end
+  local limiter = opts.limiter or M.limiter()
+  local next_note, failures, workers = 1, 0, {}
+  for index = 1, math.min(concurrency, #notes) do
+    workers[index] = function()
+      while active() do
+        local note = notes[next_note]
+        if not note then return end
+        next_note = next_note + 1
+        acquire(limiter)
+        if not active() then release(limiter); return end
+        local ok, result = pcall(provider.note_reactions, target, note)
+        release(limiter)
+        if not active() then return end
+        note.reactions_loading = nil
+        if ok then
+          note.reactions, note.reactions_error = result, nil
+        else
+          failures = failures + 1
+          note.reactions_error = tostring(result)
+        end
+        if opts.on_update then opts.on_update() end
+      end
+    end
+  end
+  async.all(workers)
+  return failures
+end
 
 local function sorted(groups)
   local list = {}
@@ -42,7 +111,7 @@ function M.summary(counts)
 end
 
 function M.text(note, with_users)
-  if note.reactions_error then return "Reactions unavailable" end
+  if note.reactions_error and not note.reactions_loading then return "Reactions unavailable" end
   local parts = {}
   for _, reaction in ipairs(note.reactions or {}) do
     local name = reaction.name
@@ -55,7 +124,10 @@ function M.text(note, with_users)
     end
     parts[#parts + 1] = text
   end
-  return #parts > 0 and ("Reactions: " .. table.concat(parts, " · ")) or nil
+  if #parts > 0 then
+    return "Reactions: " .. table.concat(parts, " · ") .. (note.reactions_loading and " · loading…" or "")
+  end
+  return note.reactions_loading and "Reactions loading…" or nil
 end
 
 return M

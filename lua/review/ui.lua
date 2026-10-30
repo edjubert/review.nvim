@@ -603,7 +603,7 @@ function M.panel(session)
   end
   local loading = session.load_state
   if loading then
-    for _, section in ipairs({ { "files", "Files" }, { "discussions", "Comments" } }) do
+    for _, section in ipairs({ { "files", "Files" }, { "discussions", "Comments" }, { "reactions", "Reactions" } }) do
       local name, label = unpack(section)
       if loading.pending[name] or loading.errors[name] then
         lines[#lines + 1] = label .. (loading.pending[name] and ": loading…" or ": unavailable")

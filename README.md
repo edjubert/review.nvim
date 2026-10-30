@@ -458,7 +458,8 @@ while you browse files and commits. The panel shows `loading…` for pending
 sections. Late comments update the current diff and open discussion windows.
 A failed comment or status request shows `unavailable` and leaves the diff
 readable; `:ReviewRefresh` retries these reads. Publication, review decisions
-and resolution wait for outstanding reads to finish.
+and resolution wait for pending comment and status reads, while reactions load
+independently.
 
 ### Refresh a review
 
@@ -724,9 +725,16 @@ Reactions appear below each comment and reply in inline discussions and
 show who reacted when the provider exposes this information.
 
 GitLab reads note emoji awards; GitHub exposes reaction counts on review comments;
-Codeberg reads comment reactions. These are read-only operations. Reactions are
-reloaded with discussions by `:ReviewRefresh`. If a reaction endpoint fails, the
-comment stays readable and shows `Reactions unavailable`.
+Codeberg reads comment reactions. On GitLab and Codeberg, comments appear before
+their reactions. Reaction reads run in the background with at most four requests
+in flight per review, including across refreshes. Pending reactions show
+`Reactions loading…`; results update inline discussions and open discussion
+windows without moving the cursor away from the selected comment.
+
+These are read-only operations. `:ReviewRefresh` reloads discussions and
+reactions, ignoring results from an older snapshot. If a reaction endpoint fails,
+the comment stays readable and shows `Reactions unavailable`; other reactions
+continue loading. Publication, decisions and resolution do not wait for reactions.
 
 ### Resolve GitLab conversations
 

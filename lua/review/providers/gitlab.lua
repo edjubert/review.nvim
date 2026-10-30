@@ -97,12 +97,6 @@ function M.discussions(target)
   local discussions = M.pages(target, M.mr_path(target) .. "/discussions")
   for _, discussion in ipairs(discussions) do
     comment_metadata(target, discussion)
-    for _, note in ipairs(discussion.notes or {}) do
-      if not note.system and type(note.id) == "number" and note.id > 0 and note.id % 1 == 0 then
-        local ok, result = pcall(M.note_reactions, target, note)
-        if ok then note.reactions = result else note.reactions_error = tostring(result) end
-      end
-    end
   end
   return discussions
 end
