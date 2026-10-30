@@ -583,6 +583,7 @@ function M.panel(session)
       decorations[#decorations + 1] = { line = #lines, selected = true }
     end
   end
+  local loading = session.load_state
   local review_status = session.data and session.data.status
   if review_status then
     local pipeline, review = review_status.pipeline, review_status.review
@@ -599,9 +600,21 @@ function M.panel(session)
       status_line("  @" .. reviewer.username .. " · " .. status.label(reviewer.state)
         .. (reviewer.stale and " (stale)" or ""), reviewer.stale and "unknown" or reviewer.state)
     end
+    if session.provider.can_resolve then
+      if loading and loading.pending.discussions then
+        status_line("Open conversations: loading…", "loading")
+      elseif loading and loading.errors.discussions then
+        status_line("Open conversations: unavailable", "unknown")
+      else
+        local open = 0
+        for _, discussion in ipairs(session.data.discussions or {}) do
+          if session.provider.can_resolve(discussion) then open = open + 1 end
+        end
+        status_line("Open conversations: " .. open, open > 0 and "pending" or "success")
+      end
+    end
     lines[#lines + 1] = ""
   end
-  local loading = session.load_state
   if loading then
     for _, section in ipairs({ { "files", "Files" }, { "discussions", "Comments" }, { "reactions", "Reactions" } }) do
       local name, label = unpack(section)

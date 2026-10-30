@@ -214,6 +214,59 @@ return function(ctx)
     end)
   end)
 
+  test("the panel counts open threads as comments arrive and keeps unknown counts distinct from zero", function()
+    fixture({ discussions = true }, function(s, f)
+      s.provider.can_resolve = require("review.providers.gitlab").can_resolve
+      f.values.pipeline = { state = "running", id = 42 }
+      local function conversation(id, resolved, resolvable)
+        local result = vim.deepcopy(discussion)
+        result.id = id
+        result.notes[1].resolvable, result.notes[1].resolved = resolvable, resolved
+        return result
+      end
+      local open = conversation("open", false, true)
+      open.notes[2] = { id = 2, resolvable = true, resolved = false }
+      local reply = conversation("open-reply", true, true)
+      reply.notes[2] = { id = 3, resolvable = true, resolved = false }
+      local outdated = conversation("outdated", false, true)
+      outdated.notes[1].outdated = true
+      local system = conversation("system", false, true)
+      system.notes[1].system = true
+      f.values.discussions = {
+        open, reply, outdated, system,
+        conversation("general", false, false), conversation("resolved", true, true),
+      }
+      s:load()
+      assert(text(s.panel_buf):find("Open conversations: loading…", 1, true))
+      assert(not text(s.panel_buf):find("Open conversations: 0", 1, true))
+      local pipeline_row
+      for row, line in ipairs(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false)) do
+        if line == "Pipeline: running (#42)" then pipeline_row = row - 1; break end
+      end
+      assert(pipeline_row)
+      local marks = vim.api.nvim_buf_get_extmarks(s.panel_buf,
+        vim.api.nvim_get_namespaces()["review.panel"], { pipeline_row, 0 }, { pipeline_row, -1 }, { details = true })
+      eq(marks[1][4].hl_group, "ReviewPipelineRunning")
+      f.release("discussions")
+      wait(function() return not s.load_state.pending.discussions end)
+      assert(text(s.panel_buf):find("Open conversations: 3", 1, true))
+      f.held.discussions, f.errors.discussions = true, "Threads unavailable"
+      s:refresh()
+      assert(text(s.panel_buf):find("Open conversations: loading…", 1, true))
+      f.release("discussions")
+      wait(function() return s.load_state.errors.discussions ~= nil end)
+      assert(text(s.panel_buf):find("Open conversations: unavailable", 1, true))
+      assert(not text(s.panel_buf):find("Open conversations: 0", 1, true))
+      f.errors.discussions = nil
+      for _, item in ipairs(f.values.discussions) do
+        for _, note in ipairs(item.notes) do note.resolved = true end
+      end
+      s:refresh()
+      assert(text(s.panel_buf):find("Open conversations: 0", 1, true))
+      eq(f.calls.writes, nil)
+    end)
+  end)
+
   test("late statuses and comments preserve the focused file in the panel", function()
     fixture({ discussions = true, pipeline = true, review = true }, function(s, f)
       f.values.review.reviewers = {

@@ -73,6 +73,7 @@ end
 function M.highlight(state)
   if state == "approved" or state == "success" then return "ReviewStatusOk" end
   if state == "changes_requested" or state == "failed" then return "ReviewStatusError" end
+  if state == "running" then return "ReviewPipelineRunning" end
   if state == "none" or state == "unknown" or state == "skipped" then return "ReviewHelp" end
   return "ReviewStatusWarn"
 end

@@ -344,6 +344,8 @@ return function(ctx)
         s:load()
         local network, requests = transport(s), {}
         s.provider.can_resolve = require("review.providers.gitlab").can_resolve
+        ctx.ui.panel(s)
+        assert(text(s.panel_buf):find("Open conversations: 2", 1, true))
         s.provider.resolve = function(_, discussion)
           local index = #requests + 1
           local request = { discussion = discussion }
@@ -371,9 +373,11 @@ return function(ctx)
           requests[1].done()
           wait(function() return requests[2] ~= nil end)
           eq(s.data.discussions[1].notes[1].resolved, true)
+          assert(text(s.panel_buf):find("Open conversations: 1", 1, true))
           eq(s.resolving, true); eq(completed(), false)
           requests[2].done()
           wait(function() return not s.resolving end)
+          assert(text(s.panel_buf):find("Open conversations: " .. (failure and 1 or 0), 1, true))
           eq(completed(), not failure)
           eq(s.data.discussions[2].notes[1].resolved, not failure)
           if failure then

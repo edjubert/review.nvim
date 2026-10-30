@@ -963,6 +963,7 @@ function Session:resolve_conversations(selected, refs, all)
       for index, old in ipairs(self.data.discussions) do
         if old.id == discussion.id then self.data.discussions[index] = result; break end
       end
+      ui.panel(self)
     end
     if all then
       notify(("ReviewResolveAll complete: %d selected conversation(s) resolved on MR !%d.")
@@ -971,9 +972,12 @@ function Session:resolve_conversations(selected, refs, all)
       notify(("Resolved %d conversation(s)."):format(count))
     end
     local ok, discussions = pcall(self.provider.discussions, self.target, self.data.mr.diff_refs, self.data.diffs)
-    if ok then self.data.discussions = discussions
+    if ok then
+      self.data.discussions = discussions
+      if self.load_state then self.load_state.errors.discussions = nil end
     else notify("Conversations were resolved, but their refresh failed. Run :ReviewRefresh.", vim.log.levels.WARN) end
     self:update_discussion_views()
+    ui.panel(self)
     self.resolving = false
     self:load_reactions(self.data)
   end, function(err)
@@ -982,6 +986,7 @@ function Session:resolve_conversations(selected, refs, all)
       :format(count, self.provider.name, err), vim.log.levels.WARN)
     -- Keep successful results visible even if a later conversation failed.
     self:task(function() self:update_discussion_views() end)
+    ui.panel(self)
     self:load_reactions(self.data)
   end)
 end

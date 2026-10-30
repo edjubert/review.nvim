@@ -238,6 +238,11 @@ when the displayed Git revisions are unchanged.
 The sidebar colors follow the colorscheme. :ReviewHelp shows shortcut hints
 in a searchable Telescope picker. Customize ReviewHelp, ReviewCommit,
 ReviewDirectory, ReviewFileAdded/Modified/Deleted/Renamed and ReviewSelected.
+Running pipelines use the blue ReviewPipelineRunning highlight.
+For GitLab, "Open conversations: N" counts unresolved, resolvable threads,
+including outdated ones, once per thread. It updates when discussions arrive
+and after each confirmed resolution. Pending or failed discussion reads show
+"loading…" or "unavailable" instead of zero.
 
 :w in the comment editor saves a persistent local draft, exits insertion and
 closes the editor. Enable keymaps.save_draft for an additional save shortcut.

@@ -481,6 +481,12 @@ requests and each reviewer's decision. GitLab includes its required approval
 count; GitHub and Codeberg show received decisions, which do not guarantee that
 all branch protection requirements are satisfied.
 
+GitLab also shows `Open conversations: N`, counting each unresolved, resolvable
+thread once, including outdated threads. The count updates as discussions arrive
+and after each confirmed resolution. Pending or failed discussion reads show
+`loading…` or `unavailable`, rather than a misleading zero.
+Running pipelines use the blue `ReviewPipelineRunning` highlight in the panel.
+
 Statuses are read when opening or refreshing a review and after submitting a
 decision or comments. Run `:ReviewRefresh` to fetch changes made on the server.
 Unavailable status endpoints display `unavailable` while the diff stays readable.
