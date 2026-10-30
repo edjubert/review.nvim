@@ -522,7 +522,7 @@ to change these colors and stage headings.
 | Pipelines or jobs | Optional `keymaps.pipeline_open` | Open the selected pipeline or job in GitLab |
 | Jobs | Optional `keymaps.pipeline_back` | Return to the pipeline list |
 | Jobs | `:ReviewJobRefresh` or optional `keymaps.pipeline_refresh` (`<C-r>` in the example) | Reload the selected job's metadata and log, bypassing the cache |
-| Jobs | `:ReviewJobLogs` or optional `keymaps.pipeline_logs` (`<C-l>` in the example) | Choose a log source through `vim.ui.select` |
+| Jobs | `:ReviewJobLogs` or optional `keymaps.pipeline_logs` (`<C-l>` in the example) | Choose a log source in the same Telescope picker; Escape returns to jobs |
 
 Telescope's selection variants (default, split, tab and drop) all perform the
 picker action above. Custom selection bindings are supported; pipeline and job
@@ -601,6 +601,9 @@ trace is always the first source. Additional sources are opt-in; discovering
 them does not slow down the initial trace preview. Canceling the source chooser
 keeps the current log. Selection, cached content and streaming cursors are kept
 separately for every job and source while browsing the pipeline.
+The source list replaces the job rows in the existing Telescope picker. Select
+a source to return to the job log, or press Escape to cancel. The selected job
+and job search are restored, without opening another `vim.ui.select` window.
 
 ```lua
 require("review").setup({

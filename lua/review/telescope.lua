@@ -597,6 +597,7 @@ function M.pipelines(session, pipelines)
     local prompt, selected, generation, picker = nil, nil, 0, nil
     local current_preview, current_entry, current_value, loading, poll
     local logs, choosing = require("review.job_logs").new(session, pipeline), false
+    local source_menu, returning
     local preserved_entry, preserved_view, preserved_results, refresh_error
     local entries = {}
     local function picker_open()
@@ -677,6 +678,10 @@ function M.pipelines(session, pipelines)
       if poll then poll.update() end
     end
     local function refresh()
+      if choosing then
+        notify("Finish choosing a log source first.")
+        return
+      end
       local entry = picker:get_selection()
       if not entry or not current_preview or not current_preview.state
           or not current_preview.state.bufnr or current_entry ~= entry then
@@ -686,6 +691,24 @@ function M.pipelines(session, pipelines)
       else
         load_preview(current_preview, entry, true)
       end
+    end
+    local function titles(prompt_title, results_title)
+      picker.prompt_title, picker.results_title = prompt_title, results_title
+      if picker.prompt_border then picker.prompt_border:change_title(prompt_title) end
+      if picker.results_border then picker.results_border:change_title(results_title) end
+    end
+    local function return_to_jobs(item)
+      if not source_menu then return end
+      local menu = source_menu
+      source_menu, returning = nil, menu
+      menu.item = item
+      if item then
+        logs.select(menu.entry.value, item)
+        current_value = nil
+      end
+      titles(menu.prompt_title, menu.results_title)
+      picker:refresh(finder(), { reset_prompt = false })
+      picker:set_prompt(menu.query)
     end
     local function select_log()
       local entry = picker:get_selection()
@@ -708,18 +731,23 @@ function M.pipelines(session, pipelines)
         local sources, errors = logs.list(job)
         if not wanted() then choosing = false; return end
         if #errors > 0 then notify("Some log sources are unavailable: " .. table.concat(errors, "\n"), vim.log.levels.WARN) end
-        vim.ui.select(sources, {
-          prompt = "Job #" .. entry.value.id .. " log source:",
-          format_item = function(item) return item.label end,
-        }, function(item)
-          choosing = false
-          if item and wanted() then
-            logs.select(entry.value, item)
-            current_value = nil
-            load_preview(current_preview, entry, true)
-          end
-          if poll then poll.update() end
-        end)
+        -- Opening vim.ui.select can trigger Telescope's BufLeave teardown.
+        -- Keep the same prompt, log controller and preview while choosing.
+        source_menu = {
+          entry = entry, query = picker:_get_prompt(), view = preview_view(current_preview),
+          prompt_title = picker.prompt_title, results_title = picker.results_title,
+        }
+        local results = {}
+        for index, item in ipairs(sources) do
+          results[#results + 1] = {
+            value = entry.value, log_source = item, display = item.label,
+            ordinal = item.label, rank = index,
+          }
+        end
+        titles("Job #" .. entry.value.id .. " log sources", "Select: log source · Esc: jobs")
+        picker:refresh(telescope.finders.new_table({
+          results = results, entry_maker = function(item) return item end,
+        }), { reset_prompt = true })
       end, function(err)
         choosing = false
         if wanted() then notify("Log sources unavailable: " .. text(err), vim.log.levels.WARN) end
@@ -765,6 +793,17 @@ function M.pipelines(session, pipelines)
       sorter = grouped_job_sorter(),
       selection_strategy = "follow",
       on_complete = { function(completed)
+        if source_menu then
+          vim.api.nvim_buf_clear_namespace(completed.results_bufnr, job_groups_namespace, 0, -1)
+          return
+        end
+        if returning and completed.manager then
+          local index = 0
+          for entry in completed.manager:iter() do
+            index = index + 1
+            if entry == returning.entry then completed:set_selection(completed:get_row(index)); break end
+          end
+        end
         job_group_headings(completed)
         restore_results(completed, preserved_results)
         preserved_results = nil
@@ -774,6 +813,14 @@ function M.pipelines(session, pipelines)
         -- Reuse one buffer rather than allocating a log buffer on every tick.
         get_buffer_by_name = function() return "review://job-log" end,
         define_preview = function(self, entry)
+          if source_menu then return end
+          if returning then
+            if entry ~= returning.entry then return end
+            local menu = returning
+            returning, choosing = nil, false
+            load_preview(self, entry, menu.item ~= nil, menu.item == nil, menu.view)
+            return
+          end
           local automatic, view = entry == preserved_entry, preserved_view
           preserved_entry, preserved_view = nil, nil
           load_preview(self, entry, automatic, automatic, view)
@@ -795,15 +842,26 @@ function M.pipelines(session, pipelines)
           auto_refresh)
         local function open()
           local entry = telescope.action_state.get_selected_entry()
+          if source_menu then
+            if entry and entry.log_source then return_to_jobs(entry.log_source) end
+            return
+          end
           if entry and session_open() then open_browser(entry.value) end
         end
         replace_selection(open)
+        local function cancel()
+          if source_menu then return_to_jobs()
+          else telescope.actions.close(prompt_bufnr) end
+        end
         for _, mode in ipairs({ "i", "n" }) do
+          map(mode, "<Esc>", cancel)
+          map(mode, "<C-c>", cancel)
           if keymaps.pipeline_open then map(mode, keymaps.pipeline_open, open) end
           if keymaps.pipeline_refresh then map(mode, keymaps.pipeline_refresh, refresh) end
           if keymaps.pipeline_logs then map(mode, keymaps.pipeline_logs, select_log) end
           if keymaps.pipeline_back then
             map(mode, keymaps.pipeline_back, function()
+              if source_menu then return_to_jobs(); return end
               telescope.actions.close(prompt_bufnr)
               vim.schedule(show_pipelines)
             end)

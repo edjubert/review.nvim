@@ -1,6 +1,6 @@
 return function(h)
   local test, eq, mocked = h.test, h.eq, h.mocked
-  local function fixture(opts, fn, interval)
+  local function fixture(opts, fn, interval, extra_jobs)
     local saved, pickers, buffers, timers, selection, module = {}, {}, {}, {}, nil, nil
     local function buffer()
       local buf = vim.api.nvim_create_buf(false, true)
@@ -12,20 +12,40 @@ return function(h)
     end
     local replacements = {
       ["telescope.pickers"] = { new = function(_, spec)
-        local picker = { spec = spec, closed = false }
+        local picker = {
+          spec = spec, closed = false, maps = {}, prompt_text = "", results_win = -1,
+          prompt_title = spec.prompt_title, results_title = spec.results_title,
+        }
         function picker:get_selection() return self.entry end
+        function picker:_get_prompt() return self.prompt_text end
+        function picker:set_prompt(value) self.prompt_text = value end
+        function picker:get_row(index) return index - 1 end
+        function picker:set_selection(row)
+          self.entry = self.spec.finder.results[row + 1]
+          self.spec.previewer.define_preview(self.spec.previewer, self.entry)
+        end
+        picker.manager = { iter = function()
+          local index = 0
+          return function()
+            index = index + 1
+            return picker.spec.finder.results[index]
+          end
+        end }
         function picker:find()
           self.prompt, self.results_bufnr = buffer(), buffer()
           self.entry = self.spec.finder.results[1]
-          self.spec.attach_mappings(self.prompt, function() end)
+          self.spec.attach_mappings(self.prompt, function(mode, key, action) self.maps[mode .. key] = action end)
           if self.spec.previewer then
             self.spec.previewer.state = { bufnr = buffer() }
             self.spec.previewer.define_preview(self.spec.previewer, self.entry)
           end
           vim.api.nvim_set_current_buf(self.prompt)
         end
-        function picker:refresh(finder)
+        function picker:refresh(finder, options)
           self.spec.finder = finder
+          self.entry = finder.results[1]
+          if options and options.reset_prompt then self.prompt_text = "" end
+          for _, callback in ipairs(self.spec.on_complete or {}) do callback(self) end
           self.spec.previewer.define_preview(self.spec.previewer, self.entry)
         end
         pickers[#pickers + 1] = picker
@@ -51,6 +71,7 @@ return function(h)
     for name, value in pairs(replacements) do saved[name], package.loaded[name] = package.loaded[name], value end
     local job = { id = 7, project_id = 23, pipeline_id = 42, name = "tests", state = "running", stage = "test" }
     local pipeline = { id = 42, project_id = 23, sha = "head", state = "running", jobs = { job } }
+    vim.list_extend(pipeline.jobs, extra_jobs or {})
     local provider = {
       prefix = "!",
       pipeline_details = function() return pipeline end, job_details = function(_, value) return value end,
@@ -85,9 +106,13 @@ return function(h)
           return table.concat(vim.api.nvim_buf_get_lines(picker.spec.previewer.state.bufnr, 0, -1, false), "\n")
         end
         local function choose(index)
-          mocked({ { vim.ui, "select", function(items, _, done) done(index and items[index] or nil) end } }, function()
+          mocked({ { vim.ui, "select", function() error("Nested UI must not be opened") end } }, function()
             module.select_job_log(session)
           end)
+          if index then
+            picker:set_selection(index - 1)
+            selection()
+          else picker.maps["n<Esc>"]() end
         end
         fn({
           module = module, session = session, picker = picker, provider = provider,
@@ -125,6 +150,75 @@ return function(h)
       assert(colored, "Custom logs must pass through the ANSI renderer")
       f.choose(1); assert(f.content():find("original trace", 1, true))
       f.close()
+    end)
+  end)
+
+  test("log source discovery stays inside Telescope even when vim.ui.select opens another picker", function()
+    fixture({ adapters = { {
+      id = "custom", list = function() return { { id = "run", label = "Run log" } } end,
+      read = function() return "custom output\n" end,
+    } } }, function(f)
+      local nested = 0
+      mocked({ { vim.ui, "select", function(_, _, done)
+        nested = nested + 1
+        done(nil)
+      end } }, function()
+        f.module.select_job_log(f.session)
+      end)
+      eq(nested, 0)
+      eq(f.picker.closed, false)
+      eq(#f.picker.spec.finder.results, 2)
+      eq(f.picker.spec.finder.results[2].display, "Run log")
+      f.close()
+    end)
+  end)
+
+  test("choosing and canceling log sources preserve the prompt, query and selected job", function()
+    fixture({ adapters = { {
+      id = "custom", list = function() return { { id = "run", label = "Run log" } } end,
+      read = function() return "custom output\n" end,
+    } } }, function(f)
+      f.picker:set_selection(1)
+      eq(f.picker:get_selection().value.id, 7)
+      local prompt, title = f.picker.prompt, f.picker.prompt_title
+      f.picker:set_prompt("tests")
+      f.choose(2)
+      eq(f.picker.prompt, prompt)
+      eq(f.picker.prompt_title, title)
+      eq(f.picker:_get_prompt(), "tests")
+      eq(f.picker:get_selection().value.id, 7)
+      assert(f.content():find("custom output", 1, true))
+      f.module.select_job_log(f.session)
+      eq(f.picker:_get_prompt(), "")
+      eq(f.picker.prompt_title, "Job #7 log sources")
+      f.picker:set_prompt("Run")
+      f.picker.maps["i<Esc>"]()
+      eq(f.picker.closed, false)
+      eq(f.picker:_get_prompt(), "tests")
+      eq(f.picker:get_selection().value.id, 7)
+      assert(f.content():find("custom output", 1, true))
+      f.close()
+    end, nil, { { id = 6, project_id = 23, pipeline_id = 42, name = "another", state = "success", stage = "test" } })
+  end)
+
+  test("late source discovery cannot replace the results of a closed picker", function()
+    local finish
+    fixture({ adapters = { {
+      id = "slow", list = function()
+        return coroutine.yield(function(done) finish = done end)
+      end,
+      read = function() return "custom output\n" end,
+    } } }, function(f)
+      f.module.select_job_log(f.session)
+      assert(finish)
+      local finder = f.picker.spec.finder
+      f.close()
+      finish({ { id = "run" } })
+      local settled = false
+      vim.schedule(function() settled = true end)
+      f.wait(function() return settled end)
+      eq(f.picker.spec.finder, finder)
+      eq(f.picker.closed, true)
     end)
   end)
 

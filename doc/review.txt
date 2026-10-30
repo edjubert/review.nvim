@@ -167,7 +167,9 @@ COMMANDS
 
 :ReviewJobLogs                                              *:ReviewJobLogs*
     Choose a log source for the selected job from its Telescope picker or
-    preview using vim.ui.select. The standard trace remains the first choice.
+    preview. Sources appear in the same Telescope picker; selecting one or
+    pressing Escape restores the jobs, selected job and search query.
+    The standard trace remains the first choice.
     Configure exact GitLab artifact paths or custom adapters with |review-job-logs|.
     Canceling leaves the current source unchanged. Sources are discovered
     asynchronously when this command is invoked.
