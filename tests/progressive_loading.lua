@@ -439,4 +439,7 @@ return function(ctx)
     refs = refs, discussion = discussion, wait = wait, text = text,
     ui = ctx.ui, git = ctx.git, target = ctx.target, note_reactions = ctx.note_reactions,
   })
+  dofile("tests/resolve_by_author.lua")({
+    test = test, eq = eq, fixture = fixture, discussion = discussion,
+  })
 end

@@ -84,11 +84,13 @@ is made by this launcher.
 The supplied images are kept at their original resolution of 1267 × 1314 pixels.
 The bulk-resolution capture intentionally highlights the resolve action while
 keeping the confirmation dialog open; it does not change the default `Cancel`
-choice when the dialog opens. The images retain the earlier file-filter position
-at the top of the panel. The current UI places it below the review information
-and immediately above the commits. The captured shortcut list at the panel's
-bottom has also moved to the `:ReviewHelp` Telescope picker, accessible through
-the demo's optional `<leader>r?` mapping. The jobs picker now has stage headings
+choice when the dialog opens. The current dialog also offers resolution by
+thread author, with a count for each author. The images retain the earlier
+file-filter position at the top of the panel. The current UI places it below
+the review information and immediately above the commits. The captured shortcut
+list at the panel's bottom has also moved to the `:ReviewHelp` Telescope picker,
+accessible through the demo's optional `<leader>r?` mapping.
+The jobs picker now has stage headings
 and previews a simulated job log below its metadata; `pipeline-job.png` keeps
 the earlier metadata-only preview. The log now retains ANSI colors and opens
 at its end. The demo's `<C-r>` mapping, or `:ReviewJobRefresh`, reloads the selected

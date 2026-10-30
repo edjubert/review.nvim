@@ -744,18 +744,23 @@ conversation. If several conversations cover the selected diff line, choose
 which one to resolve. Already resolved and non-resolvable conversations are skipped.
 The action is sent immediately after selecting the conversation.
 
-Run `:ReviewResolveAll` from the open MR session to resolve every currently
-unresolved, resolvable GitLab conversation, including outdated ones.
+Run `:ReviewResolveAll` from the open MR session to choose all currently
+unresolved, resolvable GitLab conversations or only those started by one author,
+including outdated ones.
 `Fetching open conversations…` announces the read before the confirmation.
 It checks the MR revision and fetches discussions without reactions, files or
-pipeline requests. A warning dialog shows the count and MR number;
-**Cancel** is the first/default choice.
+pipeline requests. The warning dialog offers **Cancel** as the first/default
+choice, **Resolve all**, then one option per author sorted by username. Each
+resolution option shows its conversation count and the MR number.
+Author groups use the first non-system comment of each thread; replies from
+other authors remain part of that thread. Threads without an identified author
+remain available through **Resolve all**.
 Confirm explicitly to continue. Newly created conversations after the warning
 are not included. Once all selected conversations are confirmed resolved, a
 completion notification shows their count and the MR number, without waiting
 for reactions to reload.
 
-![Resolve all confirmation warning for two GitLab conversations including outdated ones, with Cancel and Resolve all choices](assets/screenshots/resolve-all.png)
+![Earlier resolve all confirmation warning for two GitLab conversations including outdated ones, with Cancel and Resolve all choices](assets/screenshots/resolve-all.png)
 
 `:ReviewResolveAll` shows the count and warns that marking conversations resolved
 does not verify that their feedback was addressed.

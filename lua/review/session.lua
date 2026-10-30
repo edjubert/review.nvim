@@ -1049,12 +1049,31 @@ function Session:resolve_all()
       return
     end
     local choice = ("Resolve all %d conversation(s) on MR !%d"):format(#selected, self.target.iid)
-    vim.ui.select({ "Cancel", choice }, {
-      prompt = ("WARNING: mark %d conversation(s) resolved on GitLab, including outdated ones. "
-        .. "This does not verify that the feedback was addressed."):format(#selected),
+    local choices, selections = { "Cancel", choice }, { [choice] = selected }
+    local by_author = {}
+    for _, discussion in ipairs(selected) do
+      local root = threads.root(discussion)
+      local username = root and (root.author or {}).username
+      if type(username) == "string" and username ~= "" then
+        by_author[username] = by_author[username] or {}
+        by_author[username][#by_author[username] + 1] = discussion
+      end
+    end
+    local authors = vim.tbl_keys(by_author)
+    table.sort(authors)
+    for _, username in ipairs(authors) do
+      local conversations = by_author[username]
+      local author_choice = ("Resolve %d conversation(s) started by @%s on MR !%d")
+        :format(#conversations, username, self.target.iid)
+      choices[#choices + 1], selections[author_choice] = author_choice, conversations
+    end
+    vim.ui.select(choices, {
+      prompt = "WARNING: mark the selected conversations resolved on GitLab, including outdated ones. "
+        .. "This does not verify that the feedback was addressed.",
     }, function(answer)
-      if answer == choice and not self.closed and ui.valid(self) then
-        self:resolve_conversations(selected, refs, true)
+      local conversations = selections[answer]
+      if conversations and not self.closed and ui.valid(self) then
+        self:resolve_conversations(conversations, refs, true)
       else self.resolving = false end
     end)
   end, function() self.resolving = false end)
