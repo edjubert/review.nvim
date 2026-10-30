@@ -190,6 +190,17 @@ COMMANDS
     Codeberg drafts publish as COMMENT reviews; no approval is submitted.
     Finish or discard a pending Codeberg browser review before submitting.
 
+:ReviewResolveAll                                        *:ReviewResolveAll*
+    Resolve all currently unresolved, resolvable GitLab conversations,
+    including outdated ones, after explicit confirmation.
+    Notify "Fetching open conversations…" before checking the MR revision
+    and fetching discussions. This read does not request reactions, files
+    or pipelines. The warning shows the count; Cancel is the default.
+    Newly created conversations after the warning are not included.
+    Recheck the MR revision and each conversation before writing; new or
+    edited comments stop resolution so you can refresh and read them.
+    Earlier confirmed resolutions remain visible if a later request fails.
+
 :ReviewClose                                                  *:ReviewClose*
     Close the review tab.
 

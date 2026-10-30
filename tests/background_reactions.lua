@@ -290,6 +290,77 @@ return function(ctx)
     end)
   end)
 
+  test("resolve all announces loading immediately and reads only revision and discussions before confirmation", function()
+    ctx.fixture({}, function(s, f)
+      s:load()
+      local expected = vim.deepcopy(f.calls)
+      expected.current = (expected.current or 0) + 1
+      expected.discussions = expected.discussions + 1
+      f.held.current, f.held.discussions = true, true
+      local root = f.values.discussions[1].notes[1]
+      root.resolvable, root.resolved = true, false
+      local resolved, unresolvable = vim.deepcopy(f.values.discussions[1]), vim.deepcopy(f.values.discussions[1])
+      resolved.id, resolved.notes[1].resolved = "resolved", true
+      unresolvable.id, unresolvable.notes[1].resolvable = "unresolvable", false
+      f.values.discussions[2], f.values.discussions[3] = resolved, unresolvable
+      s.provider.can_resolve = require("review.providers.gitlab").can_resolve
+      s.provider.note_reactions = function() error("Resolve all must not fetch reactions") end
+      s.provider.resolve = function() error("Resolution needs confirmation") end
+      local selections, answer, choice = 0
+      mocked({ { vim.ui, "select", function(items, opts, callback)
+        selections = selections + 1
+        eq(items[1], "Cancel")
+        assert(items[2]:find("all 1 conversation(s)", 1, true))
+        assert(opts.prompt:find("WARNING", 1, true))
+        choice, answer = items[2], callback
+      end } }, function()
+        s:resolve_all()
+        eq(f.notifications[#f.notifications], "Fetching open conversations…")
+        eq(s.resolving, true); assert(f.pending.current)
+        eq(selections, 0); eq(f.pending.discussions, nil)
+        f.release("current")
+        wait(function() return f.pending.discussions ~= nil end)
+        eq(selections, 0); eq(s.resolving, true)
+        f.release("discussions")
+        wait(function() return answer ~= nil end)
+        eq(f.calls, expected); eq(selections, 1); eq(s.resolving, true)
+        assert(choice)
+        answer("Cancel")
+        eq(s.resolving, false); eq(s.reaction_load, nil)
+        eq(f.calls, expected); eq(s.error, nil)
+      end)
+    end)
+  end)
+
+  test("resolve all read failures report the error and allow a later empty read without reactions", function()
+    for _, failing in ipairs({ "current", "discussions" }) do
+      ctx.fixture({}, function(s, f)
+        s:load()
+        s.provider.can_resolve = function() return false end
+        s.provider.note_reactions = function() error("Resolve all must not fetch reactions") end
+        s.provider.resolve = function() error("Unexpected resolution") end
+        f.held[failing], f.errors[failing] = true, "Failed " .. failing .. " read"
+        mocked({ { vim.ui, "select", function() error("No confirmation for a failed or empty read") end } }, function()
+          s:resolve_all()
+          eq(f.notifications[#f.notifications], "Fetching open conversations…")
+          eq(s.resolving, true)
+          assert(f.pending[failing])
+          f.release(failing)
+          wait(function() return not s.resolving end)
+          assert(s.error:find(f.errors[failing], 1, true))
+          assert(f.notifications[#f.notifications]:find(f.errors[failing], 1, true))
+          eq(s.reaction_load, nil)
+          f.errors[failing] = nil
+          s:resolve_all()
+          eq(s.resolving, false)
+          eq(f.notifications[#f.notifications - 1], "Fetching open conversations…")
+          eq(f.notifications[#f.notifications], "No unresolved, resolvable conversations in this MR.")
+          eq(s.reaction_load, nil)
+        end)
+      end)
+    end
+  end)
+
   test("comments become visible in an open document while Git snapshots are still loading", function()
     ctx.fixture({ repository = true, discussions = true }, function(s, f)
       local network = transport(s)

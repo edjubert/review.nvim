@@ -1025,6 +1025,7 @@ end
 function Session:resolve_all()
   if not self:resolution_available() then return end
   self.resolving = true
+  notify("Fetching open conversations…")
   local refs = vim.deepcopy(self.data.mr.diff_refs)
   self:task(function()
     local latest = self.provider.current(self.target)

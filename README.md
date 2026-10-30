@@ -745,8 +745,11 @@ which one to resolve. Already resolved and non-resolvable conversations are skip
 The action is sent immediately after selecting the conversation.
 
 Run `:ReviewResolveAll` from the open MR session to resolve every currently
-unresolved, resolvable GitLab conversation, including outdated ones. A warning
-dialog shows the count and MR number; **Cancel** is the first/default choice.
+unresolved, resolvable GitLab conversation, including outdated ones.
+`Fetching open conversations…` announces the read before the confirmation.
+It checks the MR revision and fetches discussions without reactions, files or
+pipeline requests. A warning dialog shows the count and MR number;
+**Cancel** is the first/default choice.
 Confirm explicitly to continue. Newly created conversations after the warning
 are not included.
 
