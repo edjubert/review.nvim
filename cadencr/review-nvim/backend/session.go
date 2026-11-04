@@ -136,12 +136,14 @@ func (s *session) start(p startParams) (any, error) {
 		return nil, err
 	}
 	runtimePath := filepath.Join(root, "dist", "runtime")
-	if _, err := os.Stat(filepath.Join(runtimePath, "lua", "review", "init.lua")); err != nil {
-		return nil, fail("RUNTIME_MISSING", "Build the tab to include the review.nvim runtime.")
+	for _, file := range []string{"lua/review/init.lua", "bootstrap.lua", "start.lua"} {
+		if _, err := os.Stat(filepath.Join(runtimePath, file)); err != nil {
+			return nil, fail("RUNTIME_MISSING", "Build the tab to include the review.nvim runtime.")
+		}
 	}
 	// URLs are data in the environment, never Ex/Lua code or shell arguments.
 	cmd := exec.Command(p.NvimPath,
-		"--cmd", "lua vim.opt.runtimepath:prepend(vim.env.REVIEW_NVIM_RUNTIME)",
+		"--cmd", "lua dofile(vim.env.REVIEW_NVIM_RUNTIME .. '/bootstrap.lua')",
 		"-c", "lua dofile(vim.env.REVIEW_NVIM_RUNTIME .. '/start.lua')")
 	cmd.Dir = s.context.Worktree
 	cmd.Env = nvimEnvironment(os.Environ(), runtimePath, p.URL,

@@ -3,7 +3,7 @@
   "kind": "tab",
   "id": "review-nvim",
   "name": "review.nvim",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Review GitLab merge requests and GitHub or Codeberg pull requests in an embedded Neovim session, with local comment drafts.",
   "icon": "icon.svg",
   "api_version": 1,

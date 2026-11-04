@@ -49,6 +49,11 @@ func fixture(t *testing.T) (*session, string) {
 	if err := os.WriteFile(filepath.Join(runtimePath, "init.lua"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
+	for _, file := range []string{"bootstrap.lua", "start.lua"} {
+		if err := os.WriteFile(filepath.Join(root, "dist", "runtime", file), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	old, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -222,5 +227,17 @@ func TestEnvironmentReplacesStaleIntegrationVariables(t *testing.T) {
 	if slices.Contains(env, "REVIEW_NVIM_URL=old") || slices.Contains(env, "TERM=dumb") ||
 		!slices.Contains(env, "REVIEW_NVIM_URL=") || !slices.Contains(env, "CODEBERG_TOKEN=inherited") {
 		t.Fatal("the child environment did not retain CLI authentication or replace startup data")
+	}
+}
+
+func TestMissingBootstrapDoesNotLaunchNeovim(t *testing.T) {
+	s, binary := fixture(t)
+	if err := os.Remove(filepath.Join(s.context.Worktree, "dist", "runtime", "bootstrap.lua")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.start(startParams{NvimPath: binary, Cols: 80, Rows: 24})
+	problem, ok := err.(*fault)
+	if !ok || problem.Code != "RUNTIME_MISSING" || s.cmd != nil {
+		t.Fatalf("missing bootstrap must fail before launching Neovim: %v", err)
 	}
 }

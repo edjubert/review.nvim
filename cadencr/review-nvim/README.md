@@ -25,8 +25,17 @@ keep their order. Other failures remain visible and are not replayed.
   protocol has no Windows target.
 
 Neovim loads your usual configuration. The tab adds its bundled review.nvim
-runtime, keeps configured review options and shortcuts, and stores its review
-drafts and Git cache under CadencR's writable plugin state directory.
+runtime before your configuration runs and pins every `review`/`review.*` Lua
+module to that bundle. Your separately installed review.nvim cannot override
+the tab's version, even when a plugin manager resets `runtimepath` or another
+version is already cached. Missing bundled modules fail instead of falling back
+to an installed version.
+
+Configured review options and shortcuts are preserved. For `lazy.nvim`, the tab
+also loads the review plugin's configuration when it is deferred until a
+`:Review` command; that configuration uses the pinned modules. Review commands
+are then restored from the bundle. Drafts and Git cache use CadencR's writable
+plugin state directory.
 The **Neovim executable** setting accepts a program name or absolute path,
 useful when the desktop application's `PATH` differs from your terminal's.
 
@@ -68,8 +77,15 @@ cadencr plugin validate . --kind tab
 
 Go cross-compiles without CGO. Build macOS arm64 on macOS to run the explicit
 ad-hoc signing step; CadencR rejects unsigned arm64 executables. Linux binaries
-do not depend on a system libc. Tests use a native fake Neovim and mocked
-transports; they never publish a review.
+do not depend on a system libc. Backend tests use a native fake Neovim. Runtime
+tests use real Neovim with isolated configuration and mocked review opening;
+they never publish a review. They verify bundle selection despite cached modules,
+runtime resets and conflicting commands. Set `LAZY_PATH` to an installed
+`lazy.nvim` directory to also check its deferred options and config callbacks:
+
+```sh
+LAZY_PATH=/path/to/lazy.nvim npm test
+```
 
 `npm run dev` watches the web UI and bundled Lua runtime. After Go changes,
 rerun `npm run build:backend` and stop the existing backend
@@ -140,7 +156,7 @@ The destination must not already exist. The output contains:
 | `marketplace.json` | Schema-2 tab package with exact archive/executable digests |
 
 The author release URLs use
-`https://github.com/edjubert/review.nvim/releases/download/cadencr-v0.1.2/`.
+`https://github.com/edjubert/review.nvim/releases/download/cadencr-v0.1.3/`.
 Update `tab.json` and `package.json` together for a new integration version.
 Minimum app compatibility is `0.16.0`.
 
@@ -149,6 +165,6 @@ Minimum app compatibility is `0.16.0`.
 The manifest version identifies the CadencR integration, independently of any
 review.nvim source release.
 
-Packaging is local. Publishing the `cadencr-v0.1.2` source release and submitting
+Packaging is local. Publishing the `cadencr-v0.1.3` source release and submitting
 the generated metadata to CadencR's registry are separate, explicit operations.
 No unsigned feed or direct marketplace installation is created.

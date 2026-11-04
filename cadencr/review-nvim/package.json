@@ -1,6 +1,6 @@
 {
   "name": "cadencr-tab-review-nvim",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "build:backend": "node scripts/backend.mjs",
     "stage": "node scripts/stage.mjs",
     "package": "node scripts/package.mjs",
-    "test": "node --test tests/metadata.test.mjs tests/requests.test.mjs",
+    "test": "node --test tests/metadata.test.mjs tests/requests.test.mjs tests/runtime.test.mjs",
     "test:ui": "node --test tests/terminal-ui.test.mjs",
     "test:backend": "go -C backend test -race ./..."
   },
