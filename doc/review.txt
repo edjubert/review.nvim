@@ -45,7 +45,17 @@ COMMANDS
 
 :Review [url]                                                       *:Review*
     Open a GitLab MR, GitHub PR or Codeberg PR in a new tab. Without an
-    argument, prompt for its URL. The URL selects the provider automatically.
+    argument, prompt for its URL in Telescope when telescope.nvim and
+    plenary.nvim are available, or use vim.ui.input otherwise. Enter opens
+    the URL; Esc cancels the Telescope prompt. Invalid URLs stay editable
+    in Telescope; with no history, an empty answer opens nothing.
+    The picker lists the last 100 successfully loaded MR/PRs, newest first.
+    Search their titles or URLs and select one, or paste a new full URL.
+    An empty search selects the highlighted recent review. Without Telescope,
+    vim.ui.select offers recent reviews and an option to enter another URL.
+    History persists locally in state_dir/history.jsonl and is shared by
+    sessions using that directory. Failed review loads are not recorded.
+    The URL selects the provider automatically.
     Codeberg URLs use https://codeberg.org/owner/repo/pulls/123.
 
 :ReviewInfo                                                     *:ReviewInfo*

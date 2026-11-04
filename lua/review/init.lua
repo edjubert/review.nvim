@@ -44,8 +44,8 @@ function M.open(raw_url)
   if vim.fn.has("nvim-0.11") == 0 then
     vim.notify("review requires Neovim 0.11 or newer.", vim.log.levels.ERROR); return
   end
-  if not raw_url or raw_url == "" then
-    vim.ui.input({ prompt = "GitLab MR / GitHub PR / Codeberg PR URL: " }, function(value) if value then M.open(value) end end)
+  if not raw_url or vim.trim(raw_url) == "" then
+    require("review.input").url(M.open, M.config)
     return
   end
   local target, err = require("review.url").parse(raw_url)

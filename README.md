@@ -65,6 +65,7 @@ explains how to reproduce the GitLab scenes without connecting to GitLab.
 - Optional: [`telescope.nvim`](https://github.com/nvim-telescope/telescope.nvim)
   and its `plenary.nvim` dependency for `:ReviewHelp`, `:ReviewPipelines`,
   `:ReviewJobLogs`, `:ReviewJobRefresh` and `:ReviewFilesPicker`.
+  When available, Telescope also provides the URL input for `:Review`.
   The sidebar's file filter works without Telescope.
 
 ### Authentication
@@ -159,6 +160,22 @@ require("review").setup({})
 Or use `:Review` to enter one URL interactively. A new tab contains the commit/file
 panel on the left and the inline diff on the right. The first commit opens
 automatically. The panel also has a complete MR/PR entry.
+
+Without a URL, `:Review` opens a Telescope input when `telescope.nvim` and
+`plenary.nvim` are available, or falls back to `vim.ui.input`. Paste the MR/PR
+URL and press `Enter`; `Esc` cancels the Telescope input. Invalid URLs remain
+editable in the picker, and an empty answer does not open a review.
+
+The picker also lists the last 100 unique MR/PRs successfully loaded, newest
+first, with their titles and URLs. Type part of a title or URL and select a
+recent review, or paste another full URL. With history available, an empty
+prompt selects the highlighted review. Without Telescope, `vim.ui.select`
+offers the history and an option to enter another URL.
+
+History persists in `state_dir/history.jsonl`, shared by sessions using the same
+state directory. Failed loads and invalid URL input are not recorded. Entries
+are appended privately, and the picker reads at most the last 1 MiB of the
+journal; corrupt or interrupted records are skipped without replacing the file.
 
 ![A single commit expanded to show its changed files and inline diff](assets/screenshots/commit-navigation.png)
 
@@ -1072,6 +1089,17 @@ require("review").setup({
   `diffview.nvim` or `inline-diff.nvim`.
 
 ## Development
+
+### CadencR marketplace tab
+
+The [`cadencr/review-nvim`](cadencr/review-nvim/README.md) integration packages
+review.nvim as a custom **Review** tab for CadencR 0.16.0+. It embeds a Neovim
+terminal, opens the conversation's MR/PR URL when available, and otherwise
+shows the interactive URL input inside Neovim. It uses your installed Neovim
+and provider CLIs, with an argument-array native backend. The integration guide
+covers local installation, tests and preparing marketplace archives.
+
+### Neovim plugin tests
 
 ```sh
 nvim --headless -u NONE -i NONE -l tests/run.lua

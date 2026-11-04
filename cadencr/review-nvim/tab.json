@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "tab",
+  "id": "review-nvim",
+  "name": "review.nvim",
+  "version": "0.1.2",
+  "description": "Review GitLab merge requests and GitHub or Codeberg pull requests in an embedded Neovim session, with local comment drafts.",
+  "icon": "icon.svg",
+  "api_version": 1,
+  "entry": "dist/index.html",
+  "tab": { "label": "Review" },
+  "permissions": ["features:read", "forge:read"],
+  "backend": {
+    "reasoning": "Runs your installed Neovim in a pseudo-terminal with the bundled review.nvim plugin and your Neovim configuration. Git and authenticated glab/gh or curl access the review host; comments stay local until explicitly submitted in Neovim.",
+    "protocol": 1,
+    "binary": {
+      "darwin-aarch64": "bin/darwin-aarch64/review-nvim",
+      "darwin-x86_64": "bin/darwin-x86_64/review-nvim",
+      "linux-x86_64": "bin/linux-x86_64/review-nvim"
+    }
+  },
+  "configuration": [
+    {
+      "key": "nvim_path",
+      "type": "string",
+      "label": "Neovim executable (name or absolute path)",
+      "scope": "global",
+      "default": "nvim"
+    }
+  ]
+}

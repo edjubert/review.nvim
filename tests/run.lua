@@ -39,6 +39,14 @@ if arg[1] == "logs" then
   return
 end
 
+dofile("tests/url_input.lua")({ test = test, eq = eq, mocked = mocked })
+dofile("tests/history.lua")({ test = test, eq = eq, mocked = mocked })
+if arg[1] == "input" then
+  print(("%d passed, %d failed"):format(passed, failed))
+  if failed > 0 then vim.cmd("cquit 1") end
+  return
+end
+
 local url = require("review.url")
 local diff = require("review.diff")
 local position = require("review.position")

@@ -300,6 +300,10 @@ function Session:refresh()
     if not initial then self:reload_viewed() end
     self.error = nil
     self:select_commit(index, selection)
+    if initial then
+      local saved, save_error = pcall(require("review.history").record, self.config, self.target, data.mr)
+      if not saved then notify(save_error, vim.log.levels.WARN) end
+    end
     self:update_discussion_views()
     if not initial then notify("Review refreshed.") end
   end, function(err)
