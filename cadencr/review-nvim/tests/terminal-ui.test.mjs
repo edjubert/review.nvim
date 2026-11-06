@@ -83,6 +83,18 @@ test("idle polling stays well below CadencR's shared plugin request budget", { t
   const fixture = await host(t, "https://github.com/owner/repo/pull/21");
   const page = await browser(t, fixture);
   await until(async () => await opened(fixture.opened) !== null);
+  // Neovim's initial output and terminal replies legitimately use fast polling.
+  // Measure idle traffic only after both output and input have settled.
+  let transcript = fixture.transcript(), quietSince = Date.now();
+  await until(() => {
+    const output = fixture.transcript();
+    if (output !== transcript) {
+      transcript = output;
+      quietSince = Date.now();
+    }
+    const lastInput = fixture.attempts().filter((attempt) => attempt.method === "terminal.input").at(-1)?.at ?? 0;
+    return Date.now() - Math.max(quietSince, lastInput) >= 1100;
+  });
   const initial = fixture.attempts().length;
   await page.waitForTimeout(5000);
   const attempts = fixture.attempts().slice(initial);
