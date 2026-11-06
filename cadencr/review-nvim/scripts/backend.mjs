@@ -24,10 +24,11 @@ for (const target of targets) {
   const directory = `${root}/bin/${target}`;
   await mkdir(directory, { recursive: true });
   const temporary = `${directory}/review-nvim.next`;
-  run("go", ["-C", "backend", "build", "-trimpath", "-o", temporary, "."],
+  run("go", ["-C", "backend", "build", "-mod=readonly", "-trimpath", "-buildvcs=true", "-o", temporary, "."],
     { ...process.env, GOOS, GOARCH, CGO_ENABLED: "0" });
   if (GOOS === "darwin" && GOARCH === "arm64" && process.platform === "darwin") {
     run("codesign", ["--force", "--sign", "-", temporary]);
+    run("codesign", ["--verify", "--strict", temporary]);
   }
   // Replace the inode; rewriting a previously run Mach-O breaks its cached signature.
   await rename(temporary, `${directory}/review-nvim`);

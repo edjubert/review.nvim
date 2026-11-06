@@ -157,27 +157,3 @@ test("missing conversation URL asks in Telescope, validates input and opens on E
   await until(async () => await opened(fixture.opened) === url);
   assert.equal((await page.locator("#error").isVisible()), false);
 });
-
-test("Telescope restores visited reviews after restarting Neovim and opens the selected history row", {
-  timeout: 30_000, skip: !process.env.TELESCOPE_PATH || !process.env.PLENARY_PATH,
-}, async (t) => {
-  const url = "https://github.com/owner/repo/pull/29";
-  const fixture = await host(t, "");
-  const page = await browser(t, fixture);
-  await until(() => fixture.transcript().includes("Enter a GitLab MR"));
-  await page.locator(".xterm-helper-textarea").focus();
-  await page.keyboard.type(url);
-  await until(async () => (await opened(fixture.prompted))?.includes(url));
-  await page.keyboard.press("Enter");
-  await until(async () => await opened(fixture.opened) === url);
-  await page.keyboard.press("Escape");
-  await page.keyboard.type(":qa!");
-  await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: "Start Neovim", exact: true }).click();
-  await until(() => fixture.transcript().includes("Offline fixture review"));
-  await page.locator(".xterm-helper-textarea").focus();
-  await page.keyboard.type("fixture");
-  await page.keyboard.press("Enter");
-  await until(async () => (await readFile(fixture.opened, "utf8")).trim().split("\n").length === 2);
-  assert.equal(await opened(fixture.opened), url);
-});

@@ -2,3 +2,8 @@
 *.swp
 *.swo
 *.log
+/cadencr/review-nvim/node_modules/
+/cadencr/review-nvim/dist/
+/cadencr/review-nvim/bin/
+/cadencr/review-nvim/staging/
+/artifacts/

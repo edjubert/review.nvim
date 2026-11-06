@@ -44,8 +44,6 @@ local review = require("review")
 local open = review.open
 review.open = function(url)
   if not url or vim.trim(url) == "" then return open(url) end
-  require("review.history").record(review.config, assert(require("review.url").parse(url)),
-    { title = "Offline fixture review" })
   vim.fn.writefile({ url }, vim.env.REVIEW_TEST_OPENED, "a")
   vim.api.nvim_buf_set_lines(0, 0, -1, false, { "Offline review opened", url })
 end

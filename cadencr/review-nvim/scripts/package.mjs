@@ -4,12 +4,30 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { metadata, repository } from "./metadata.mjs";
+import { digest, treeDigests, verifyNativeReceipt } from "./receipts.mjs";
+import { requireCleanSource } from "./source.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const manifest = JSON.parse(await readFile(`${root}/tab.json`, "utf8"));
-const destination = resolve(process.argv[2] ?? `../releases/review-nvim-v${manifest.version}`);
+const destination = resolve(process.argv[2] ?? `${repositoryRoot}/artifacts/release-${manifest.version}`);
 const cli = process.env.CADENCR_CLI ?? "cadencr";
 const release = `${repository}/releases/download/cadencr-v${manifest.version}`;
+const source = requireCleanSource(repositoryRoot,
+  JSON.parse(await readFile(`${root}/dist/runtime/source.json`, "utf8")));
+const receipts = {};
+for (const target of Object.keys(manifest.backend.binary)) {
+  const directory = `${repositoryRoot}/artifacts/native/native-${target}`;
+  const receipt = JSON.parse(await readFile(`${directory}/build-receipt.json`, "utf8"));
+  await verifyNativeReceipt(root, source, target, receipt);
+  if (JSON.stringify(receipt.evidence) !== JSON.stringify(await treeDigests(`${directory}/evidence`))) {
+    throw new Error(`Native test evidence was changed for ${target}`);
+  }
+  receipts[target] = receipt;
+}
+if (JSON.stringify(receipts["linux-x86_64"].frontend) !== JSON.stringify(await treeDigests(`${root}/dist`))) {
+  throw new Error("The frontend must match the natively tested Linux build.");
+}
 function run(args) {
   const result = spawnSync(cli, args, { encoding: "utf8" });
   if (result.error) throw result.error;
@@ -51,6 +69,31 @@ try {
   const document = join(destination, "marketplace.json");
   await writeFile(document, JSON.stringify(metadata(manifest, web, binaries), null, 2) + "\n", { flag: "wx" });
   run(["registry", "validate-metadata", document, "--json"]);
+  const submission = {
+    schema_version: 2,
+    package: metadata(manifest, web, binaries),
+    source: { repository, commit: source.commit, tag: `cadencr-v${manifest.version}` },
+    changelog: "Bundle gemoji and compiled-dependency notices; require clean exact-source native builds, test evidence and build attestations.",
+  };
+  await mkdir(join(destination, "packages"));
+  await mkdir(join(destination, "submissions"));
+  await cp(document, join(destination, "packages", `${manifest.id}-${manifest.version}.json`));
+  const submitted = join(destination, "submissions", `${manifest.id}-${manifest.version}.json`);
+  await writeFile(submitted, JSON.stringify(submission, null, 2) + "\n");
+  run(["registry", "validate-submission", submitted, "--json"]);
+  await cp(`${repositoryRoot}/artifacts/native`, join(destination, "native-evidence"), { recursive: true });
+  for (const target of Object.keys(binaries)) {
+    await rm(join(destination, "native-evidence", `native-${target}`, "review-nvim"));
+  }
+  await writeFile(join(destination, "build-receipt.json"), JSON.stringify({
+    schema_version: 1, source, native: receipts,
+    packaging: {
+      cli_version: spawnSync(cli, ["--version"], { encoding: "utf8" }).stdout.trim(),
+    },
+    outputs: Object.fromEntries(await Promise.all(
+      ["tab.tar.gz", ...Object.keys(binaries).map((target) => `tab-backend-${target}.tar.gz`)]
+        .map(async (name) => [name, await digest(join(destination, name))]))),
+  }, null, 2) + "\n");
   console.log(`Prepared ${destination}\nNo release or registry submission was published.`);
 } finally {
   await rm(staging, { recursive: true, force: true });

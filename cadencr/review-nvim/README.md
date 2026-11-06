@@ -4,9 +4,6 @@ A custom `Review` tab for **CadencR 0.16.0+**. Opening it starts your installed
 Neovim in an embedded terminal, with the review.nvim runtime bundled in the tab.
 The conversation's MR/PR URL opens automatically. Without a URL, Neovim asks
 for one through Telescope; without Telescope, it uses `vim.ui.input`.
-The picker also offers previously loaded MR/PRs, with titles and searchable
-URLs. This history survives Neovim restarts and is shared across the tab's
-conversations.
 
 The tab preserves the Neovim process when hidden or when its webview reloads.
 Closing the tab lets CadencR stop its backend after its normal grace period.
@@ -96,7 +93,7 @@ in the tab's **Activity** panel before reopening it.
 The browser checks use a real Neovim PTY and the tab SDK's MessagePort protocol.
 A local fixture replaces review loading, so no Git provider is contacted.
 They cover opening a conversation URL, resizing, preserving the session and
-Telescope input across a webview reload, persisted review history, live font
+Telescope input across a webview reload, live font
 changes, idle request frequency, recovery from HTTP 429 with queued input,
 other transport errors and restarting an exited Neovim.
 They do not replace checking the installed tab inside CadencR.
@@ -136,16 +133,27 @@ CLI is required. If there is no MR/PR link, enter one in Neovim and press
 CadencR distributes the web UI and each platform's native backend as separate
 archives. The packaging command uses CadencR's own validators and deterministic
 archive writers, verifies backend conformance, binds the manifest to the
-marketplace metadata, and fills the real SHA-256 digests and sizes:
+marketplace metadata, and fills the real SHA-256 digests and sizes.
 
-```sh
-npm run build
-npm run build:backend -- --all
-npm run package -- /absolute/path/to/new-release-directory
-```
+The `Qualify review.nvim tab` workflow builds the clean exact source on macOS
+arm64, macOS Intel and Linux x86_64. Each runner executes the Go race tests,
+Lua/runtime tests, the real-Neovim browser tests and a compiled-backend protocol
+check. It records toolchain versions, dependency input digests, executable
+digests and test logs. Successful push/tag runs also produce GitHub build
+attestations for the executables and final archives.
+
+The packaging job verifies all three native receipts, preserves the exact tested
+Linux frontend and refuses stale, changed or unqualified outputs. Cross-compiling
+with `--all` is useful for development but cannot replace native qualification.
+It generates the package/submission JSON files and validates a complete candidate
+against the trusted registry base pinned in `ci/toolchains.json`. This is author
+validation; the registry's own checks and maintainer consent remain required.
 
 If `cadencr` is not on `PATH`, set `CADENCR_CLI` to its executable path.
-The destination must not already exist. The output contains:
+After downloading the native artifacts to the repository's `artifacts/native/`
+and restoring the binaries under `bin/`, run `npm run package`. The destination
+defaults to `artifacts/release-0.1.5/` at the repository root and must not exist.
+The workflow's `release-candidate` artifact contains:
 
 | File | Contents |
 | --- | --- |
@@ -154,17 +162,26 @@ The destination must not already exist. The output contains:
 | `tab-backend-darwin-x86_64.tar.gz` | macOS Intel backend |
 | `tab-backend-linux-x86_64.tar.gz` | Linux backend |
 | `marketplace.json` | Schema-2 tab package with exact archive/executable digests |
+| `packages/`, `submissions/` | Registry contribution generated from those bytes |
+| `build-receipt.json` | Exact source, toolchains, dependency inputs and native receipts |
+| `native-evidence.tar.gz` | Native test logs, receipts and backend dependency notices |
+| `registry-validation.json` | Author validation against the pinned trusted base |
 
 The author release URLs use
-`https://github.com/edjubert/review.nvim/releases/download/cadencr-v0.1.4/`.
-Update `tab.json` and `package.json` together for a new integration version.
+`https://github.com/edjubert/review.nvim/releases/download/cadencr-v0.1.5/`.
+Update `tab.json`, `package.json` and the lockfile's root version together.
 Minimum app compatibility is `0.16.0`.
 
-`dist/runtime/source.json` records the bundled source commit, the fetched
-`origin/main` revision and whether local runtime changes were included.
+`dist/runtime/source.json` records the bundled source commit and whether local
+source changes were included. Release packaging requires `modified: false`
+and a commit matching the current clean checkout. Frontend and backend dependency
+licenses are in `dist/LICENSES/`, with an index in `dist/THIRD_PARTY_NOTICES.md`.
+The Lua runtime also contains the project's `LICENSES/`, including gemoji.
 The manifest version identifies the CadencR integration, independently of any
 review.nvim source release.
 
-Packaging is local. Publishing the `cadencr-v0.1.4` source release and submitting
+Packaging is local. Publishing the `cadencr-v0.1.5` source release and submitting
 the generated metadata to CadencR's registry are separate, explicit operations.
 No unsigned feed or direct marketplace installation is created.
+
+See [RELEASE.md](RELEASE.md) for immutable publication and registry evidence.
