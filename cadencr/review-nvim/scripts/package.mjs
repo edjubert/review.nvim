@@ -10,9 +10,14 @@ import { requireCleanSource } from "./source.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const manifest = JSON.parse(await readFile(`${root}/tab.json`, "utf8"));
+const releaseTag = `cadencr-v${manifest.version}`;
+if (process.env.GITHUB_REF?.startsWith("refs/tags/") &&
+    process.env.GITHUB_REF !== `refs/tags/${releaseTag}`) {
+  throw new Error(`The release tag must match the manifest version: ${releaseTag}`);
+}
 const destination = resolve(process.argv[2] ?? `${repositoryRoot}/artifacts/release-${manifest.version}`);
 const cli = process.env.CADENCR_CLI ?? "cadencr";
-const release = `${repository}/releases/download/cadencr-v${manifest.version}`;
+const release = `${repository}/releases/download/${releaseTag}`;
 const source = requireCleanSource(repositoryRoot,
   JSON.parse(await readFile(`${root}/dist/runtime/source.json`, "utf8")));
 const receipts = {};
@@ -72,7 +77,7 @@ try {
   const submission = {
     schema_version: 2,
     package: metadata(manifest, web, binaries),
-    source: { repository, commit: source.commit, tag: `cadencr-v${manifest.version}` },
+    source: { repository, commit: source.commit, tag: releaseTag },
     changelog: "Bundle gemoji and compiled-dependency notices; require clean exact-source native builds, test evidence and build attestations.",
   };
   await mkdir(join(destination, "packages"));

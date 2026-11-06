@@ -3,11 +3,22 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { copyNotices } from "../scripts/licenses.mjs";
 import { copyRuntime, runtimeSources } from "../scripts/runtime.mjs";
 import { requireCleanSource, sourceState } from "../scripts/source.mjs";
 import { digest, sourceInputs, verifyNativeReceipt } from "../scripts/receipts.mjs";
+
+test("a mismatched release tag fails before packaging or calling the registry CLI", () => {
+  const result = spawnSync(process.execPath,
+    [fileURLToPath(new URL("../scripts/package.mjs", import.meta.url))], {
+      env: { ...process.env, GITHUB_REF: "refs/tags/cadencr-v999.0.0", CADENCR_CLI: "/missing/fixture-cli" },
+      encoding: "utf8",
+    });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /release tag must match the manifest version/);
+});
 
 test("the distributed emoji catalogue retains its exact gemoji license and build watch input", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "review-notices-"));
