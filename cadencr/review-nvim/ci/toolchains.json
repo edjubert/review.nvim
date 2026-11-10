@@ -1,0 +1,31 @@
+{
+  "node": "22.18.0",
+  "go": "1.27.3",
+  "neovim": {
+    "version": "0.11.5",
+    "assets": {
+      "darwin-arm64": {
+        "name": "nvim-macos-arm64.tar.gz",
+        "sha256": "79143d3b408f7034f90b7cf59af2276de09ef8a4c2f1a28e4c99581b249d3107"
+      },
+      "darwin-x64": {
+        "name": "nvim-macos-x86_64.tar.gz",
+        "sha256": "6612760a7037ca2518e456908baf5e43101fa79819d18979fc4d4e8441d9dfa5"
+      },
+      "linux-x64": {
+        "name": "nvim-linux-x86_64.tar.gz",
+        "sha256": "b2f91117be5b5ea39edd7297156dc2a4a8df4add6c95a90809a8df19e7ab6f52"
+      }
+    }
+  },
+  "cadencr": {
+    "version": "0.15.4",
+    "source": "3ebb603160d9dcf054adbb6315c68cb8702cf7ce",
+    "name": "cadencr-v0.15.4-x86_64-unknown-linux-gnu",
+    "sha256": "d925f203c3fd2e51621ad00ef1413bb25fdf8bc25792dbec9d5d2a67b1d4244d"
+  },
+  "registry": {
+    "repository": "merkr-software/cadencr-registry",
+    "base": "2c6ee24e485c1ff6b80c53c35b333a9b91973b44"
+  }
+}

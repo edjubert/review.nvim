@@ -432,7 +432,20 @@ test("review buffers render selectable deleted rows and register comment mapping
   eq(selection, { 1, 2 })
   s:close()
 end)
-test("sidebar footer stays at the bottom while scrolling and resizing", function()
+local function help_entry(session, command)
+  local telescope = require("review.telescope")
+  local before, entries = telescope.help, nil
+  telescope.help = function(items) entries = items end
+  local ok, err = xpcall(function() ui.help(session) end, debug.traceback)
+  telescope.help = before
+  assert(ok, err)
+  for _, entry in ipairs(entries or {}) do
+    if entry.command == command then return entry end
+  end
+  error("Missing help entry: " .. command)
+end
+
+test("file filter remains accessible while scrolling and resizing", function()
   local s = Session.new(target, config)
   s.data = { mr = { title = "Colored tree" }, commits = {} }
   s.files, s.file_index = {}, 1
@@ -440,29 +453,30 @@ test("sidebar footer stays at the bottom while scrolling and resizing", function
     s.files[i] = { status = i == 1 and "A" or "M", new_path = "directory/file-" .. i .. ".lua" }
   end
   ui.create(s)
-  local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
-  assert(hints:find("gA complete MR", 1, true))
-  assert(hints:find("<leader>rc comment line/range", 1, true))
-  assert(hints:find("]h/[h", 1, true))
-  local footer = vim.api.nvim_win_get_config(s.help_win)
-  eq(footer.focusable, false)
-  eq(footer.row + footer.height, vim.api.nvim_win_get_height(s.panel_win))
+  eq(help_entry(s, ":ReviewComplete").key, "gA")
+  eq(help_entry(s, ":[range]ReviewComment").key, "<leader>rc")
+  eq(help_entry(s, ":ReviewNextChange").key, "]h")
+  local filter = vim.api.nvim_win_get_config(s.filter_win)
+  eq(filter.focusable, true)
+  eq(filter.footer[1][1], " 50/50 ")
   vim.api.nvim_set_current_win(s.panel_win)
   vim.api.nvim_win_set_cursor(s.panel_win, { 45, 0 })
   vim.cmd.normal({ args = { "zz" }, bang = true })
-  eq(vim.api.nvim_win_get_config(s.help_win).row, footer.row)
+  vim.api.nvim_exec_autocmds("WinScrolled", { modeline = false })
+  ui.filter(s)
+  eq(vim.api.nvim_win_get_config(s.filter_win).row, 0)
   vim.api.nvim_win_set_width(s.panel_win, 35)
   vim.api.nvim_exec_autocmds("WinResized", { modeline = false })
-  eq(vim.api.nvim_win_get_config(s.help_win).width, vim.api.nvim_win_get_width(s.panel_win))
+  eq(vim.api.nvim_win_get_config(s.filter_win).width, vim.api.nvim_win_get_width(s.panel_win) - 2)
   eq(vim.api.nvim_get_hl(0, { name = "ReviewHelp", link = true }).link, "Comment")
   local marks = vim.api.nvim_buf_get_extmarks(s.panel_buf,
     vim.api.nvim_create_namespace("review.panel"), 0, -1, { details = true })
   local groups = {}
   for _, mark in ipairs(marks) do groups[mark[4].hl_group or mark[4].line_hl_group] = true end
   assert(groups.ReviewFileAdded and groups.ReviewDirectory and groups.ReviewSelected)
-  local help_win = s.help_win
+  local filter_win = s.filter_win
   s:close()
-  eq(vim.api.nvim_win_is_valid(help_win), false)
+  eq(vim.api.nvim_win_is_valid(filter_win), false)
 end)
 test("change shortcuts move focus to the diff and honor counts", function()
   local s = Session.new(target, config)
@@ -495,9 +509,7 @@ test("comment shortcut can be customized or disabled without claiming gc", funct
     ui.create(s)
     local maps = vim.api.nvim_buf_get_keymap(s.viewer_buf, "n")
     assert(not vim.iter(maps):any(function(map) return map.lhs == "gc" end))
-    local hint = key or ":ReviewComment"
-    local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
-    assert(hints:find(hint .. " comment line/range", 1, true))
+    eq(help_entry(s, ":[range]ReviewComment").key, key)
     if key then assert(vim.fn.maparg(key, "n", false, true).buffer == 1) end
     s:close()
   end
@@ -517,8 +529,7 @@ test("submit shortcut previews from either review window and keeps publication e
   s.drafts = { drafts.new("Shortcut draft",
     assert(position.build(refs, file, { { kind = "add", new_line = 4 } })), "head") }
   ui.create(s)
-  local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
-  assert(hints:find("<leader>rs submit", 1, true))
+  eq(help_entry(s, ":ReviewSubmit").key, "<leader>rs")
   for _, win in ipairs({ s.panel_win, s.viewer_win }) do
     vim.api.nvim_set_current_win(win)
     vim.api.nvim_feedkeys((vim.g.mapleader or "\\") .. "rs", "xt", false)
@@ -682,8 +693,7 @@ test("inline toggle keeps buffer positions, cursor, local drafts and transports 
   local marks = comment_marks(s)
   assert(marks[2][4].virt_text[1][1]:find("local draft", 1, true))
   assert(#marks[2][4].virt_lines > 0)
-  local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
-  assert(hints:find("inline comments (on)", 1, true))
+  assert(help_entry(s, ":ReviewToggleComments").description:find("(on)", 1, true))
   vim.cmd.ReviewToggleComments()
   for _, mark in ipairs(comment_marks(s)) do eq(#(mark[4].virt_lines or {}), 0) end
   eq(reads, 0); eq(writes, 0); eq(#s.drafts, 1)
@@ -710,8 +720,7 @@ test("inline comment shortcut toggles from both windows and can be customized or
           return map.desc == "Show or hide inline discussions"
         end))
       end
-      local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
-      assert(hints:find(":ReviewToggleComments", 1, true))
+      eq(help_entry(s, ":ReviewToggleComments").key, false)
       s:toggle_comments()
       eq(s.inline_comments, true)
     end
@@ -1079,8 +1088,7 @@ test("comment browser shortcut is configurable in diff and discussion buffers an
       { vim.ui, "open", function() opened = opened + 1; return {} end },
     }, function()
       vim.api.nvim_win_set_cursor(s.viewer_win, { 4, 0 })
-      local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
-      assert(hints:find((key or ":ReviewOpenComment") .. " open comment URL", 1, true))
+      eq(help_entry(s, ":ReviewOpenComment").key, key)
       local function check_mapping()
         if key then
           local mapping = vim.fn.maparg(key, "n", false, true)
@@ -1183,8 +1191,7 @@ test("reply shortcut is configurable, diff-only, and cancellation leaves no draf
     else
       local maps = vim.api.nvim_buf_get_keymap(s.viewer_buf, "n")
       assert(not vim.iter(maps):any(function(map) return map.desc == "Draft a reply to this discussion" end))
-      local hints = table.concat(vim.api.nvim_buf_get_lines(s.help_buf, 0, -1, false), "\n")
-      assert(hints:find(":ReviewReply", 1, true))
+      eq(help_entry(s, ":ReviewReply").key, false)
     end
     local maps = vim.api.nvim_buf_get_keymap(s.panel_buf, "n")
     assert(not vim.iter(maps):any(function(map) return map.desc == "Draft a reply to this discussion" end))

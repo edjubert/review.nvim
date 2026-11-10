@@ -1,0 +1,27 @@
+{
+  "name": "cadencr-tab-review-nvim",
+  "version": "0.1.6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "npm run build:ui && npm run build:backend",
+    "build:ui": "tsc --noEmit && vite build",
+    "build:backend": "node scripts/backend.mjs",
+    "stage": "node scripts/stage.mjs",
+    "package": "node scripts/package.mjs",
+    "test": "node --test tests/metadata.test.mjs tests/requests.test.mjs tests/runtime.test.mjs tests/distribution.test.mjs",
+    "test:ui": "node --test tests/terminal-ui.test.mjs",
+    "test:backend": "go -C backend test -race ./..."
+  },
+  "dependencies": {
+    "@cadencr/tab-sdk": "0.1.3",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/xterm": "5.5.0"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1",
+    "typescript": "5.9.3",
+    "vite": "6.4.5"
+  }
+}

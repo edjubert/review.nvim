@@ -1,0 +1,165 @@
+name: Qualify review.nvim tab
+
+on:
+  push:
+    branches: ["edjubert/cadencr-review-tab-v*"]
+    tags: ["cadencr-v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native ${{ matrix.target }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-aarch64
+            runner: macos-15
+          - target: darwin-x86_64
+            runner: macos-15-intel
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    outputs:
+      node: ${{ steps.pins.outputs.node }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    defaults:
+      run:
+        working-directory: cadencr/review-nvim
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: pins
+        run: |
+          node --input-type=module -e '
+          import fs from "node:fs";
+          const pins = JSON.parse(fs.readFileSync("ci/toolchains.json"));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `node=${pins.node}\ngo=${pins.go}\n`);
+          '
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ steps.pins.outputs.node }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: ${{ steps.pins.outputs.go }}
+          cache: false
+      - name: Install hash-pinned Neovim
+        run: node scripts/install-tools.mjs neovim
+      - name: Install locked dependencies and verify Go modules
+        run: |
+          npm ci
+          go -C backend mod download
+          go -C backend mod verify
+      - name: Build clean exact source natively
+        run: npm run build
+      - name: Install test browser
+        run: npx playwright install --with-deps chromium
+      - name: Run native tests and record executable qualification
+        env:
+          TARGET: ${{ matrix.target }}
+        run: node scripts/qualify.mjs "$TARGET"
+      - name: Attest native executable
+        if: github.event_name != 'pull_request' && github.repository == 'edjubert/review.nvim'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: cadencr/review-nvim/bin/${{ matrix.target }}/review-nvim
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-${{ matrix.target }}
+          path: cadencr/review-nvim/bin/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: matrix.target == 'linux-x86_64'
+        with:
+          name: web
+          path: cadencr/review-nvim/dist/
+          if-no-files-found: error
+          retention-days: 90
+
+  package:
+    name: Package qualified source and validate registry candidate
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ needs.native.outputs.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: native-*
+          path: artifacts/native
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: web
+          path: cadencr/review-nvim/dist
+      - name: Restore qualified executable modes and install pinned registry CLI
+        shell: bash
+        run: |
+          for target in darwin-aarch64 darwin-x86_64 linux-x86_64; do
+            mkdir -p "cadencr/review-nvim/bin/$target"
+            cp "artifacts/native/native-$target/review-nvim" "cadencr/review-nvim/bin/$target/review-nvim"
+            chmod 755 "cadencr/review-nvim/bin/$target/review-nvim"
+          done
+          node cadencr/review-nvim/scripts/install-tools.mjs cadencr
+      - name: Package exact tested bytes and generate registry metadata
+        working-directory: cadencr/review-nvim
+        run: npm run package
+      - id: registry
+        run: |
+          node --input-type=module -e '
+          import fs from "node:fs";
+          const { registry } = JSON.parse(fs.readFileSync("cadencr/review-nvim/ci/toolchains.json"));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `repository=${registry.repository}\nbase=${registry.base}\n`);
+          '
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ steps.registry.outputs.repository }}
+          ref: ${{ steps.registry.outputs.base }}
+          path: artifacts/registry/base
+          persist-credentials: false
+      - name: Author validation against the pinned trusted registry base
+        shell: bash
+        run: |
+          version=$(node -p 'JSON.parse(require("fs").readFileSync("cadencr/review-nvim/tab.json")).version')
+          release="artifacts/release-$version"
+          cp -R artifacts/registry/base artifacts/registry/candidate
+          cp "$release/packages/"*.json artifacts/registry/candidate/packages/
+          cp "$release/submissions/"*.json artifacts/registry/candidate/submissions/
+          cadencr registry validate --base artifacts/registry/base --candidate artifacts/registry/candidate --json > "$release/registry-validation.json"
+          tar -czf "$release/native-evidence.tar.gz" -C "$release" native-evidence
+      - name: Attest archives and build evidence
+        if: github.event_name != 'pull_request' && github.repository == 'edjubert/review.nvim'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: |
+            artifacts/release-*/*.tar.gz
+            artifacts/release-*/build-receipt.json
+            artifacts/release-*/registry-validation.json
+            artifacts/release-*/marketplace.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-candidate
+          path: artifacts/release-*/
+          if-no-files-found: error
+          retention-days: 90
