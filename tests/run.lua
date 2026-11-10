@@ -1613,7 +1613,7 @@ test("GitLab GraphQL change requests use the explicit host and literal variables
     provider.request_changes(target)
     eq(#captured, 2)
     eq(captured[2].argv, { "glab", "api", "--hostname", target.host,
-      "--method", "POST", "graphql", "--input", "-" })
+      "--method", "POST", "graphql", "--header", "Content-Type: application/json", "--input", "-" })
     eq(captured[2].body.variables.input, { projectPath = target.project, iid = "12" })
     assert(captured[1].body.query:find("__type", 1, true))
     assert(captured[2].body.query:find("mergeRequestRequestChanges(input: $input)", 1, true))

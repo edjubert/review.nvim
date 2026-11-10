@@ -100,7 +100,7 @@ return function(ctx)
     }, state.resolve)
     eq(#calls, 3); eq(state.list_reads, 1); eq(#state.batches, 1)
     eq(calls[3].argv, { "glab", "api", "--hostname", target.host,
-      "--method", "POST", "graphql", "--input", "-" })
+      "--method", "POST", "graphql", "--header", "Content-Type: application/json", "--input", "-" })
     local body = calls[3].body
     eq(body.variables.input1, { id = "gid://gitlab/Discussion/thread%2Fid", resolve = true })
     for index = 1, 3 do

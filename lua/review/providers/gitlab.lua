@@ -16,7 +16,7 @@ function M.request(target, endpoint, body, method, raw)
   local argv = { "glab", "api", "--hostname", target.host, "--method", method or (body and "POST" or "GET"), endpoint }
   local opts = {}
   if body then
-    vim.list_extend(argv, { "--input", "-" })
+    vim.list_extend(argv, { "--header", "Content-Type: application/json", "--input", "-" })
     opts.stdin = vim.json.encode(body)
   end
   local output = async.checked(argv, opts)
