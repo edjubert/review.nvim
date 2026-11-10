@@ -46,6 +46,7 @@ local sha1 = require("review.sha1")
 local drafts = require("review.drafts")
 local git = require("review.git")
 local provider = require("review.providers.gitlab")
+local actual_gitlab_request = provider.request
 local actual_gitlab_status = provider.status
 local actual_gitlab_note_reactions = provider.note_reactions
 -- Existing fixtures simulate comments/diffs; status-specific tests below use
@@ -1891,6 +1892,12 @@ dofile("tests/reactions_resolution.lua")({
   note_reactions = actual_gitlab_note_reactions,
   provider = provider, ui = ui, refs = refs, target = target, url = url, drafts = drafts,
   fixture = comment_url_fixture, comment_marks = comment_marks, virtual_text = virtual_text,
+})
+
+dofile("tests/batch_resolution.lua")({
+  test = test, eq = eq, raises = raises, mocked = mocked,
+  provider = provider, request = actual_gitlab_request, refs = refs, target = target, drafts = drafts,
+  fixture = comment_url_fixture,
 })
 
 dofile("tests/job_logs.lua")({

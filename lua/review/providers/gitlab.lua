@@ -26,6 +26,31 @@ function M.request(target, endpoint, body, method, raw)
   return data
 end
 
+local function supports_mutation(target, name)
+  local result = M.request(target, "graphql", {
+    query = "{ __type(name: \"Mutation\") { fields { name } } }",
+  })
+  if type(result) ~= "table" then return false end
+  if result.errors ~= nil and (type(result.errors) ~= "table" or not vim.islist(result.errors) or #result.errors > 0) then
+    return false
+  end
+  local data = result.data
+  local mutation = type(data) == "table" and data.__type
+  -- Some GitLab versions cache the complete schema even for a targeted query.
+  if type(mutation) ~= "table" and type(data) == "table" and type(data.__schema) == "table"
+      and type(data.__schema.types) == "table" then
+    for _, candidate in ipairs(data.__schema.types) do
+      if candidate.name == "Mutation" then mutation = candidate; break end
+    end
+  end
+  if type(mutation) == "table" and type(mutation.fields) == "table" then
+    for _, field in ipairs(mutation.fields) do
+      if field.name == name then return true end
+    end
+  end
+  return false
+end
+
 function M.project_path(target)
   return "projects/" .. url.encode(target.project)
 end
@@ -120,16 +145,17 @@ function M.can_resolve(discussion)
   return false
 end
 
-function M.resolve(target, discussion)
+local function validate_discussion_id(discussion)
   if type(discussion.id) ~= "string" or discussion.id == "" then
     error("This conversation has no valid GitLab discussion ID.", 0)
   end
-  local endpoint = M.mr_path(target) .. "/discussions/" .. url.encode(discussion.id)
-  local current = M.request(target, endpoint)
+end
+
+local function resolution_snapshot(discussion, current)
   if type(current) ~= "table" or current.id ~= discussion.id or type(current.notes) ~= "table" then
     error("The original GitLab conversation is no longer available. Refresh the review.", 0)
   end
-  if M.is_resolved(current) then return comment_metadata(target, current), false end
+  if M.is_resolved(current) then return nil end
   if not M.can_resolve(current) then error("This GitLab conversation cannot be resolved.", 0) end
   local original_root, current_root = threads.root(discussion), threads.root(current)
   if not original_root or not current_root or original_root.id ~= current_root.id then
@@ -152,17 +178,122 @@ function M.resolve(target, discussion)
       end
     end
   end
-  local result = M.request(target, endpoint, { resolved = true }, "PUT")
-  if type(result) ~= "table" or result.id ~= discussion.id or not M.is_resolved(result) then
-    error("GitLab did not confirm the resolved conversation. Check the MR before retrying.", 0)
-  end
+  return expected
+end
+
+local function resolution_metadata(target, result, expected)
   -- Keep known reactions until the subsequent read-only refresh. A failed
   -- reaction read must never turn a confirmed resolution into an uncertain one.
   for _, note in ipairs(result.notes or {}) do
     local old = expected[note.id]
     if old then note.reactions, note.reactions_error = old.reactions, old.reactions_error end
   end
-  return comment_metadata(target, result), true
+  return comment_metadata(target, result)
+end
+
+function M.resolve(target, discussion)
+  validate_discussion_id(discussion)
+  local endpoint = M.mr_path(target) .. "/discussions/" .. url.encode(discussion.id)
+  local current = M.request(target, endpoint)
+  local expected = resolution_snapshot(discussion, current)
+  if not expected then return comment_metadata(target, current), false end
+  local result = M.request(target, endpoint, { resolved = true }, "PUT")
+  if type(result) ~= "table" or result.id ~= discussion.id or not M.is_resolved(result) then
+    error("GitLab did not confirm the resolved conversation. Check the MR before retrying.", 0)
+  end
+  return resolution_metadata(target, result, expected), true
+end
+
+local function resolve_batch(target, pending, on_result)
+  local inputs, fields, variables = {}, {}, {}
+  for index, item in ipairs(pending) do
+    item.alias = "resolve" .. index
+    item.gid = "gid://gitlab/Discussion/" .. url.encode(item.current.id)
+    inputs[index] = ("$input%d: DiscussionToggleResolveInput!"):format(index)
+    fields[index] = ("%s: discussionToggleResolve(input: $input%d) { errors discussion { id resolved } }")
+      :format(item.alias, index)
+    variables["input" .. index] = { id = item.gid, resolve = true }
+  end
+  -- Aliases share one HTTP request, but GitLab can resolve only part of a batch.
+  -- Inspect every result before raising; never retry an uncertain write.
+  local response = M.request(target, "graphql", {
+    query = "mutation(" .. table.concat(inputs, ", ") .. ") { " .. table.concat(fields, " ") .. " }",
+    variables = variables,
+  })
+  local data = type(response) == "table" and response.data
+  local failures, failed_aliases = {}, {}
+  local top_errors
+  if type(response) == "table" then top_errors = response.errors end
+  if top_errors ~= nil then
+    if type(top_errors) ~= "table" or not vim.islist(top_errors) then
+      failures[#failures + 1] = "Unconfirmed GraphQL operation"
+    else
+      for _, err in ipairs(top_errors) do
+        local message = type(err) == "table" and err.message
+        failures[#failures + 1] = type(message) == "string" and message or "Unconfirmed GraphQL operation"
+        local path = type(err) == "table" and err.path
+        if type(path) == "table" and type(path[1]) == "string" then failed_aliases[path[1]] = true end
+      end
+    end
+  end
+  for _, item in ipairs(pending) do
+    local payload = type(data) == "table" and data[item.alias]
+    if not failed_aliases[item.alias] then
+      local errors = type(payload) == "table" and payload.errors
+      local discussion = type(payload) == "table" and payload.discussion
+      local valid_errors = type(errors) == "table" and vim.islist(errors)
+      if valid_errors then
+        for _, message in ipairs(errors) do
+          if type(message) ~= "string" then valid_errors = false; break end
+        end
+      end
+      if valid_errors and #errors > 0 then
+        failures[#failures + 1] = item.current.id .. ": " .. table.concat(errors, "; ")
+      elseif not valid_errors or type(discussion) ~= "table"
+          or discussion.id ~= item.gid or discussion.resolved ~= true then
+        failures[#failures + 1] = "GitLab did not confirm the resolved conversation " .. item.current.id
+      else
+        local result = vim.deepcopy(item.current)
+        for _, note in ipairs(result.notes) do
+          if not note.system and note.resolvable == true then note.resolved = true end
+        end
+        on_result(resolution_metadata(target, result, item.expected), true)
+      end
+    end
+  end
+  if #failures > 0 then
+    error("GitLab batch resolution failed: " .. table.concat(failures, "; ") .. ". Check the MR before retrying.", 0)
+  end
+end
+
+function M.resolve_many(target, selected, on_result)
+  if #selected == 0 then return end
+  for _, discussion in ipairs(selected) do validate_discussion_id(discussion) end
+  -- Detect unsupported servers with a read, before any batch write is sent.
+  if #selected == 1 or not supports_mutation(target, "discussionToggleResolve") then
+    for _, discussion in ipairs(selected) do
+      local result, changed = M.resolve(target, discussion)
+      on_result(result, changed)
+    end
+    return
+  end
+  -- Bound query complexity, and reread discussions before each subsequent batch.
+  local batch_size = 20
+  for first = 1, #selected, batch_size do
+    local current, pending = {}, {}
+    for _, discussion in ipairs(M.discussions(target)) do current[discussion.id] = discussion end
+    for index = first, math.min(first + batch_size - 1, #selected) do
+      local discussion = selected[index]
+      local fresh = current[discussion.id]
+      local expected = resolution_snapshot(discussion, fresh)
+      if expected then
+        pending[#pending + 1] = { current = fresh, expected = expected }
+      else
+        on_result(comment_metadata(target, fresh), false)
+      end
+    end
+    if #pending > 0 then resolve_batch(target, pending, on_result) end
+  end
 end
 
 function M.post(target, draft)
@@ -342,23 +473,7 @@ end
 function M.validate_request_changes(target)
   -- Introspection is read-only and detects older GitLab installations before
   -- any comments are published by the combined submission flow.
-  local result = M.request(target, "graphql", {
-    query = "{ __type(name: \"Mutation\") { fields { name } } }",
-  })
-  local data = type(result) == "table" and result.data
-  local mutation = type(data) == "table" and data.__type
-  -- Some GitLab versions serve a cached complete introspection response even
-  -- for a targeted __type query. The Mutation fields then live in schema.types.
-  if type(mutation) ~= "table" and type(data) == "table" and type(data.__schema) == "table" then
-    for _, candidate in ipairs(data.__schema.types or {}) do
-      if candidate.name == "Mutation" then mutation = candidate; break end
-    end
-  end
-  if type(mutation) == "table" then
-    for _, field in ipairs(mutation.fields or {}) do
-      if field.name == "mergeRequestRequestChanges" then return end
-    end
-  end
+  if supports_mutation(target, "mergeRequestRequestChanges") then return end
   error("This GitLab server does not expose the Request changes API. Use its web interface.", 0)
 end
 

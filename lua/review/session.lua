@@ -952,18 +952,25 @@ function Session:resolve_conversations(selected, refs, all)
   self.resolving = true
   local count = 0
   self:task(function()
-    for _, discussion in ipairs(selected) do
-      local latest = self.provider.current(self.target)
-      if not position.same_refs(refs, latest.diff_refs) then
-        error("The MR changed. Refresh and read it before resolving its conversations.", 0)
-      end
-      local result, changed = self.provider.resolve(self.target, discussion)
+    local latest = self.provider.current(self.target)
+    if not position.same_refs(refs, latest.diff_refs) then
+      error("The MR changed. Refresh and read it before resolving its conversations.", 0)
+    end
+    local function record_result(result, changed)
       if changed then count = count + 1 end
-      -- Record each confirmed result before proceeding to the next thread.
+      -- Record every confirmed result, including partial bulk responses.
       for index, old in ipairs(self.data.discussions) do
-        if old.id == discussion.id then self.data.discussions[index] = result; break end
+        if old.id == result.id then self.data.discussions[index] = result; break end
       end
       ui.panel(self)
+    end
+    if all and #selected > 1 and self.provider.resolve_many then
+      self.provider.resolve_many(self.target, selected, record_result)
+    else
+      for _, discussion in ipairs(selected) do
+        local result, changed = self.provider.resolve(self.target, discussion)
+        record_result(result, changed)
+      end
     end
     if all then
       notify(("ReviewResolveAll complete: %d selected conversation(s) resolved on MR !%d.")

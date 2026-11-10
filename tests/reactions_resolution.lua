@@ -202,6 +202,10 @@ return function(ctx)
         return result
       end },
       { provider, "request", function(_, endpoint, body, method)
+        if endpoint == "graphql" then
+          assert(body.query:find("__type", 1, true), "Unexpected GraphQL write")
+          return { data = { __type = { fields = {} } } }
+        end
         local id = endpoint:match("/discussions/(.+)$")
         assert(backend[id], "Unknown discussion " .. tostring(id))
         if body then
@@ -285,12 +289,20 @@ return function(ctx)
   test("resolve all only mutates confirmed snapshot IDs and leaves newly created conversations open", function()
     local s, backend, order, calls, overrides = fixture()
     local pending, choice
+    local revision_reads = 0
+    overrides[2][3] = function()
+      revision_reads = revision_reads + 1
+      eq(#calls, 0)
+      return { diff_refs = refs }
+    end
     overrides[#overrides + 1] = { vim.ui, "select", function(items, _, selected) pending, choice = selected, items[2] end }
     mocked(overrides, function()
       s:resolve_all(); eq(#calls, 0)
+      eq(revision_reads, 1)
       backend.added = conversation("added", 900)
       order[#order + 1] = "added"
       pending(choice)
+      eq(revision_reads, 2)
       eq(calls, { "new", "old", "overlap" }); eq(s.resolving, false)
       eq(backend.added.notes[1].resolved, false)
       eq(s.data.discussions[4].notes[1].resolved, false)

@@ -931,15 +931,21 @@ for reactions to reload.
 does not verify that their feedback was addressed.
 
 Both commands use GitLab's native discussion resolution API and require the
-corresponding permission. They check the MR revision and reread each conversation
-before writing. New or edited comments stop resolution so you can refresh and
-read the changes. Local drafts stay local.
+corresponding permission. They check the MR revision once immediately before
+starting resolution. `:ReviewResolve` rereads its conversation before writing.
+For multiple conversations, `:ReviewResolveAll` uses GraphQL batches of at most
+20 resolutions per request, rereading discussions before each batch to detect
+new or edited comments. Servers without the GraphQL resolution mutation fall
+back to individual REST requests. New or edited comments stop resolution so you
+can refresh and read the changes. Local drafts stay local.
 
 Each confirmed resolution is kept visible in the diff and open discussion
-windows. If an API request fails, processing stops; earlier confirmed resolutions
-are retained and the remaining conversations are left alone. Check GitLab before
-retrying if a request's outcome could not be confirmed. GitHub and Codeberg
-conversation resolution is not implemented.
+windows. Batches are not atomic: a failed batch can still contain successful
+resolutions, which are retained, including successes after a failed result in
+the same batch. Processing stops before the next batch, and uncertain writes
+are never retried automatically. Check GitLab before retrying if a request's
+outcome could not be confirmed. GitHub and Codeberg conversation resolution is
+not implemented.
 
 ### Inline discussions
 

@@ -213,9 +213,15 @@ COMMANDS
     Replies remain part of their original thread regardless of author.
     Threads without an identified author are included only in Resolve all.
     Newly created conversations after the warning are not included.
-    Recheck the MR revision and each conversation before writing; new or
+    Recheck the MR revision once after confirmation, before starting
+    resolution. Multiple conversations use GraphQL batches of at most 20
+    resolutions per request. Reread discussions before each batch; new or
     edited comments stop resolution so you can refresh and read them.
-    Earlier confirmed resolutions remain visible if a later request fails.
+    Servers without the GraphQL resolution mutation use individual REST
+    requests, rereading each conversation before writing.
+    Batches are not atomic. Keep every confirmed resolution visible if
+    another result in the same batch fails, then stop before the next batch.
+    Never retry an uncertain write automatically; check GitLab before retrying.
     After all selected conversations are confirmed resolved, notify their
     count and the MR number without waiting for reactions to reload.
 
