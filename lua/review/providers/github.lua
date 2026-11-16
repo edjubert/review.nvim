@@ -10,9 +10,9 @@ function M.head_ref(target)
   return ("refs/pull/%d/head"):format(target.iid)
 end
 
-function M.request(target, endpoint, body)
+function M.request(target, endpoint, body, method, raw)
   local argv = {
-    "gh", "api", "--hostname", target.host, "--method", body and "POST" or "GET",
+    "gh", "api", "--hostname", target.host, "--method", method or (body and "POST" or "GET"),
     "-H", "Accept: application/vnd.github+json", endpoint,
   }
   local opts = {}
@@ -21,6 +21,7 @@ function M.request(target, endpoint, body)
     opts.stdin = vim.json.encode(body)
   end
   local output = async.checked(argv, opts)
+  if raw then return output end
   local ok, data = pcall(vim.json.decode, output)
   if not ok then error("GitHub returned an invalid JSON response.", 0) end
   return data
@@ -244,6 +245,145 @@ function M.diffs(target, pr)
     }
   end
   return diffs
+end
+
+local function positive_id(value)
+  return type(value) == "number" and value > 0 and value % 1 == 0
+end
+
+-- Check suite and check run endpoints reply with an object holding one list,
+-- unlike the raw arrays paginated by M.pages.
+local function wrapped_pages(target, endpoint, key)
+  local all = {}
+  for page = 1, 1000 do
+    local data = M.request(target, endpoint .. "?per_page=100&page=" .. page)
+    if type(data) ~= "table" or not vim.islist(data[key]) then
+      error("GitHub returned an invalid " .. key .. " list.", 0)
+    end
+    vim.list_extend(all, data[key])
+    if #data[key] < 100 then return all end
+  end
+  error("GitHub pagination exceeded 1000 pages; refusing an incomplete result.", 0)
+end
+
+-- Check run statuses and conclusions use a vocabulary the shared pipeline
+-- picker already renders through its style and label tables.
+local function check_state(value)
+  if type(value) ~= "table" then return "unknown" end
+  if value.status == "queued" then return "queued" end
+  if value.status == "in_progress" then return "in_progress" end
+  if value.status == "completed" then
+    if type(value.conclusion) == "string" and value.conclusion ~= "" then
+      return value.conclusion
+    end
+    return "unknown"
+  end
+  return type(value.status) == "string" and value.status or "unknown"
+end
+
+-- Timestamps are UTC ISO strings; the calendar conversion cancels out except
+-- across a DST change, where a duration can drift by one hour.
+local function timestamp(value)
+  if type(value) ~= "string" then return nil end
+  local year, month, day, hour, minute, second =
+    value:match("^(%d%d%d%d)-(%d%d)-(%d%d)T(%d%d):(%d%d):(%d%d)")
+  if not year then return nil end
+  return os.time({ year = year, month = month, day = day, hour = hour, min = minute, sec = second })
+end
+
+local function run_duration(run)
+  local started, finished = timestamp(run.started_at), timestamp(run.completed_at)
+  if not started or not finished then return nil end
+  local seconds = finished - started
+  return seconds >= 0 and seconds or nil
+end
+
+local function suite_metadata(suite)
+  local app = type(suite.app) == "table" and suite.app or {}
+  return {
+    id = suite.id,
+    name = type(app.name) == "string" and app.name or "checks",
+    state = check_state(suite),
+    ref = suite.head_branch, sha = suite.head_sha,
+    created_at = suite.created_at, updated_at = suite.updated_at,
+  }
+end
+
+local function job_metadata(run, pipeline_id)
+  if type(run) ~= "table" or not positive_id(run.id) then
+    error("GitHub returned an invalid check run.", 0)
+  end
+  local app = type(run.app) == "table" and run.app or {}
+  return {
+    id = run.id, name = run.name,
+    stage = type(app.name) == "string" and app.name or "checks",
+    state = check_state(run), pipeline_id = pipeline_id,
+    ref = run.head_branch, sha = run.head_sha,
+    duration = run_duration(run),
+    started_at = run.started_at, finished_at = run.completed_at,
+    web_url = type(run.html_url) == "string" and run.html_url
+      or (type(run.details_url) == "string" and run.details_url or nil),
+  }
+end
+
+-- A PR's pipelines are the check suites anchored to its head commit, the same
+-- set GitHub lists in the pull request's Checks tab.
+function M.pipelines(target, head_sha)
+  if type(head_sha) ~= "string" or head_sha == "" then
+    local pr = M.info(target)
+    if type(pr) ~= "table" or type(pr.head) ~= "table" or type(pr.head.sha) ~= "string" then
+      error("GitHub did not provide the PR head commit.", 0)
+    end
+    head_sha = pr.head.sha
+  end
+  local suites = wrapped_pages(target,
+    M.repo_path(target) .. "/commits/" .. url.encode(head_sha) .. "/check-suites", "check_suites")
+  local pipelines = {}
+  for _, suite in ipairs(suites) do
+    if type(suite) ~= "table" or not positive_id(suite.id) then
+      error("GitHub returned an invalid check suite.", 0)
+    end
+    pipelines[#pipelines + 1] = suite_metadata(suite)
+  end
+  table.sort(pipelines, function(a, b) return a.id > b.id end)
+  return pipelines
+end
+
+function M.pipeline_details(target, pipeline)
+  if not positive_id(pipeline.id) then error("This pipeline has no valid GitHub ID.", 0) end
+  local result = vim.deepcopy(pipeline)
+  result.jobs = {}
+  local ok, runs = pcall(wrapped_pages, target,
+    M.repo_path(target) .. "/check-suites/" .. pipeline.id .. "/check-runs", "check_runs")
+  if not ok then result.jobs_error = tostring(runs); return result end
+  for _, run in ipairs(runs) do
+    result.jobs[#result.jobs + 1] = job_metadata(run, pipeline.id)
+  end
+  table.sort(result.jobs, function(a, b) return a.id < b.id end)
+  return result
+end
+
+-- Actions check runs mirror workflow jobs sharing the same ID, which unlocks
+-- runner metadata and the job log. Other apps have no workflow job.
+function M.job_details(target, job)
+  if not positive_id(job.id) then error("This job has no valid GitHub ID.", 0) end
+  local ok, run = pcall(M.request, target, M.repo_path(target) .. "/actions/jobs/" .. job.id)
+  if not ok or type(run) ~= "table" or run.id ~= job.id then return vim.deepcopy(job) end
+  local result = vim.deepcopy(job)
+  result.state = check_state(run)
+  result.started_at = run.started_at or result.started_at
+  result.finished_at = run.completed_at or result.finished_at
+  result.duration = run_duration(run) or result.duration
+  result.runner = type(run.runner_name) == "string" and run.runner_name or result.runner
+  result.web_url = type(run.html_url) == "string" and run.html_url or result.web_url
+  return result
+end
+
+-- The shared logs module passes GitLab's trace path template; GitHub reads the
+-- workflow job log directly and leaves the template unused.
+function M.job_trace(target, job, path)
+  if not positive_id(job.id) then error("This job has no valid GitHub ID.", 0) end
+  return M.request(target, M.repo_path(target) .. "/actions/jobs/" .. job.id .. "/logs", nil, "GET", true)
 end
 
 function M.project(target)

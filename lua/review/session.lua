@@ -721,7 +721,7 @@ function Session:show_pipelines()
     return
   end
   if not self.provider.pipelines or not self.provider.pipeline_details then
-    notify("Pipeline details are currently supported for GitLab merge requests.", vim.log.levels.WARN)
+    notify("Pipeline details are currently supported for GitLab merge requests and GitHub pull requests.", vim.log.levels.WARN)
     return
   end
   if self.loading_pipelines then notify("Pipelines are already loading."); return end
@@ -729,10 +729,13 @@ function Session:show_pipelines()
   if not picker.available("ReviewPipelines") then return end
   self.loading_pipelines = true
   self:task(function()
-    local pipelines = self.provider.pipelines(self.target)
+    -- GitHub pipelines anchor to the review head commit; GitLab ignores it.
+    local diffs = type(self.data.mr) == "table" and self.data.mr.diff_refs
+    local head = type(diffs) == "table" and diffs.head_sha or nil
+    local pipelines = self.provider.pipelines(self.target, head)
     self.loading_pipelines = false
     if self.closed or not ui.valid(self) then return end
-    if #pipelines == 0 then notify("No pipelines attached to this MR."); return end
+    if #pipelines == 0 then notify("No pipelines attached to this review."); return end
     picker.pipelines(self, pipelines)
   end, function() self.loading_pipelines = false end)
 end

@@ -251,7 +251,7 @@ function M._commands()
   vim.api.nvim_create_user_command("ReviewHelp", M.help,
     { desc = "Search review commands and configured mappings in Telescope" })
   vim.api.nvim_create_user_command("ReviewPipelines", M.pipelines,
-    { desc = "Browse GitLab MR pipelines, grouped jobs and job logs in Telescope" })
+    { desc = "Browse review pipelines, grouped jobs and job logs in Telescope" })
   vim.api.nvim_create_user_command("ReviewJobRefresh", M.refresh_job,
     { desc = "Reload the selected job's metadata and log without using cached results" })
   vim.api.nvim_create_user_command("ReviewJobLogs", M.job_logs,

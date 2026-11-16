@@ -183,7 +183,7 @@ merge base.
 | `:ReviewPanel <action>` | Open or fold the selected panel entry |
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewHelp` | Search commands, configured mappings and their context in Telescope |
-| `:ReviewPipelines` | Browse the GitLab MR's pipelines and jobs in Telescope |
+| `:ReviewPipelines` | Browse the review's pipelines and jobs in Telescope (GitLab pipelines, GitHub head commit check suites) |
 | `:ReviewJobRefresh` | Reload the selected job's metadata and log in its Telescope picker |
 | `:ReviewJobLogs` | Choose the selected job's trace, a configured artifact or a custom log source |
 | `:ReviewFiles [query]` | Focus the sidebar's live file filter, or apply a query |
@@ -498,11 +498,14 @@ Unavailable status endpoints display `unavailable` while the diff stays readable
 
 ### Pipeline details in Telescope
 
-Run `:ReviewPipelines` in an open GitLab MR. The picker lists all pipelines attached
-to that MR, newest first, with status, source, commit, ref and creation date.
-Its preview loads the selected pipeline's jobs and downstream triggers
-asynchronously, including stage, status, duration and failure reason. It also
-indicates whether the pipeline matches the MR head revision loaded in your review.
+Run `:ReviewPipelines` in an open GitLab MR or GitHub PR. The picker lists all
+pipelines attached to the review, newest by identifier first, with status,
+source, commit, ref and creation date. On GitHub, pipelines are the check
+suites of the PR's head commit, the entries GitHub shows in its Checks tab,
+and each pipeline's jobs are the suite's check runs. Its preview loads the
+selected pipeline's jobs asynchronously, including stage, status and duration.
+It also indicates whether the pipeline matches the head revision loaded in
+your review.
 
 Jobs are grouped under bold stage headings, with the stage name shown once.
 Each job shows an icon, its name, status and duration. Pipeline and job rows,
@@ -603,8 +606,13 @@ Downstream triggers show their downstream pipeline metadata and link, since
 they have no job trace.
 
 An unavailable jobs or triggers endpoint is reported in the preview. The command
-only reads GitLab APIs and does not run, retry or cancel jobs.
-Pipeline details for GitHub and Codeberg are not implemented.
+only reads provider APIs and does not run, retry or cancel jobs.
+Pipeline details for Codeberg are not implemented.
+
+On GitHub, highlighting a job fetches its workflow job metadata and its
+Actions job log. Only GitHub Actions check runs have a workflow job with the
+same ID; logs of third-party checks are not exposed through GitHub's REST API
+and show an unavailable message instead.
 
 ### Custom job logs
 

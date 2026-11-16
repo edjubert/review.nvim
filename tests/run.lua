@@ -1565,6 +1565,99 @@ test("GitHub status includes all check run pages and decisive reviews", function
   end)
 end)
 
+test("GitHub pipelines list the head commit's check suites", function()
+  local github = require("review.providers.github")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  local endpoints = {}
+  mocked({ { github, "request", function(_, endpoint)
+    endpoints[#endpoints + 1] = endpoint
+    if endpoint:find("/commits/head/check-suites", 1, true) then
+      return { check_suites = {
+        { id = 7, status = "completed", conclusion = "success", head_branch = "feature",
+          head_sha = "head", app = { name = "deploy" } },
+        { id = 22, status = "completed", conclusion = "failure", head_branch = "feature",
+          head_sha = "head", app = { name = "ci" }, created_at = "2024-01-01T00:00:00Z" },
+      } }
+    end
+    error("unexpected endpoint: " .. endpoint)
+  end } }, function()
+    local pipelines = github.pipelines(gh_target, "head")
+    eq(endpoints[1], "repos/owner/repo/commits/head/check-suites?per_page=100&page=1")
+    eq(#pipelines, 2)
+    eq(pipelines[1].id, 22); eq(pipelines[1].name, "ci"); eq(pipelines[1].state, "failure")
+    eq(pipelines[1].sha, "head"); eq(pipelines[1].ref, "feature")
+    eq(pipelines[2].id, 7); eq(pipelines[2].state, "success")
+  end)
+end)
+
+test("GitHub pipelines fall back to the PR head commit", function()
+  local github = require("review.providers.github")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  local called = {}
+  mocked({ { github, "request", function(_, endpoint)
+    called[#called + 1] = endpoint
+    if endpoint == "repos/owner/repo/pulls/12" then
+      return { head = { sha = "fallback" } }
+    end
+    if endpoint:find("/commits/fallback/check-suites", 1, true) then return { check_suites = {} } end
+    error("unexpected endpoint: " .. endpoint)
+  end } }, function()
+    eq(github.pipelines(gh_target), {})
+    eq(called[1], "repos/owner/repo/pulls/12")
+    eq(called[2], "repos/owner/repo/commits/fallback/check-suites?per_page=100&page=1")
+  end)
+end)
+
+test("GitHub pipeline details map check runs to grouped jobs", function()
+  local github = require("review.providers.github")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  mocked({ { github, "request", function(_, endpoint)
+    if endpoint:find("/check-suites/22/check-runs", 1, true) then
+      return { check_runs = {
+        { id = 6, name = "lint", status = "in_progress", head_branch = "feature", head_sha = "head",
+          app = { name = "ci" }, details_url = "https://github.com/owner/repo/pull/12/checks" },
+        { id = 5, name = "unit", status = "completed", conclusion = "success",
+          head_branch = "feature", head_sha = "head", app = { name = "ci" },
+          started_at = "2024-01-01T00:00:00Z", completed_at = "2024-01-01T00:02:00Z" },
+      } }
+    end
+    error("unexpected endpoint: " .. endpoint)
+  end } }, function()
+    local pipeline = github.pipeline_details(gh_target, { id = 22, name = "ci" })
+    eq(#pipeline.jobs, 2)
+    eq(pipeline.jobs[1].id, 5); eq(pipeline.jobs[1].state, "success")
+    eq(pipeline.jobs[1].stage, "ci"); eq(pipeline.jobs[1].duration, 120)
+    eq(pipeline.jobs[2].id, 6); eq(pipeline.jobs[2].state, "in_progress")
+    eq(pipeline.jobs[2].web_url, "https://github.com/owner/repo/pull/12/checks")
+  end)
+  mocked({ { github, "request", function() error("Missing permission") end } }, function()
+    local result = github.pipeline_details(gh_target, { id = 22 })
+    eq(result.jobs, {})
+    assert(result.jobs_error:find("Missing permission", 1, true))
+  end)
+end)
+
+test("GitHub job details merge the workflow job of Actions check runs", function()
+  local github = require("review.providers.github")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  mocked({ { github, "request", function(_, endpoint)
+    if endpoint:find("/actions/jobs/5", 1, true) then
+      return { id = 5, status = "completed", conclusion = "failure",
+        started_at = "2024-01-01T00:00:30Z", completed_at = "2024-01-01T00:01:00Z",
+        runner_name = "ubuntu-latest", html_url = "https://github.com/owner/repo/actions/runs/9/job/5" }
+    end
+    error("gh: Not Found (HTTP 404)")
+  end } }, function()
+    local result = github.job_details(gh_target, { id = 5, name = "unit", state = "queued" })
+    eq(result.id, 5); eq(result.state, "failure"); eq(result.duration, 30)
+    eq(result.runner, "ubuntu-latest")
+    eq(result.web_url, "https://github.com/owner/repo/actions/runs/9/job/5")
+    -- Non-Action check runs have no workflow job. Keep the check run untouched.
+    local fallback = github.job_details(gh_target, { id = 7, name = "deploy", state = "success" })
+    eq(fallback.id, 7); eq(fallback.name, "deploy"); eq(fallback.state, "success")
+  end)
+end)
+
 test("Codeberg status uses commit statuses and ignores private pending reviews", function()
   local codeberg = require("review.providers.codeberg")
   local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/12"))

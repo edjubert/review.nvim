@@ -122,7 +122,9 @@ COMMANDS
     Requires telescope.nvim and plenary.nvim.
 
 :ReviewPipelines                                          *:ReviewPipelines*
-    Browse an open GitLab MR's pipelines in Telescope. Select a pipeline to
+    Browse an open review's pipelines in Telescope. On GitLab these are the
+    MR's pipelines; on GitHub the check suites of the PR's head commit, the
+    entries GitHub shows in its Checks tab. Select a pipeline to
     open its jobs, grouped beneath non-selectable stage headings and sorted
     by name within each stage. Search preserves the group order.
     Success is green, failure red, pending orange, running blue, and inactive
@@ -156,12 +158,16 @@ COMMANDS
     Reselecting an unfinished job reloads it after a three-second interval.
     Telescope's selection action on a job (<Enter> by default) opens its log
     sources. Selecting a source keeps it and returns to the job list.
-    Enable keymaps.pipeline_open to open the pipeline or job in GitLab
+    Enable keymaps.pipeline_open to open the pipeline or job in the browser
     (<C-o> in the README example), and keymaps.pipeline_back to return from
     jobs to the pipeline list.
+    On GitHub, jobs are check runs grouped under their app's name. Highlighting
+    a job loads the Actions workflow job sharing the run's ID for runner
+    metadata, then its job log. Third-party checks have no REST log and show
+    an unavailable message.
     All Telescope selection variants, including split, tab and drop, use
     these picker actions; provider entries are not opened as local files.
-    Requires telescope.nvim and plenary.nvim. GitHub and Codeberg pipeline
+    Requires telescope.nvim and plenary.nvim. Codeberg pipeline
     details are not implemented. All requests are read-only.
 
 :ReviewJobRefresh                                        *:ReviewJobRefresh*
