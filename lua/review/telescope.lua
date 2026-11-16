@@ -794,7 +794,7 @@ function M.pipelines(session, pipelines)
     end
     picker = telescope.pickers.new(options, {
       prompt_title = "Pipeline #" .. pipeline.id .. " jobs",
-      results_title = "Select: browser"
+      results_title = "Select: log sources"
         .. (keymaps.pipeline_open and " · " .. keymaps.pipeline_open .. ": browser" or "")
         .. (keymaps.pipeline_back and " · " .. keymaps.pipeline_back .. ": pipelines" or "")
         .. (keymaps.pipeline_logs and " · " .. keymaps.pipeline_logs .. ": log sources" or "")
@@ -853,15 +853,18 @@ function M.pipelines(session, pipelines)
         }
         poll = focused_poll(interval, prompt, picker_open, contains, function() return running(pipeline) end,
           auto_refresh)
+        replace_selection(function()
+          if source_menu then
+            local entry = telescope.action_state.get_selected_entry()
+            if entry and entry.log_source then return_to_jobs(entry.log_source) end
+          else
+            select_log()
+          end
+        end)
         local function open()
           local entry = telescope.action_state.get_selected_entry()
-          if source_menu then
-            if entry and entry.log_source then return_to_jobs(entry.log_source) end
-            return
-          end
           if entry and session_open() then open_browser(entry.value) end
         end
-        replace_selection(open)
         local function cancel()
           if source_menu then return_to_jobs()
           else telescope.actions.close(prompt_bufnr) end

@@ -154,9 +154,11 @@ COMMANDS
     FocusGained/FocusLost events reaching Neovim.
     Finished previews are otherwise cached while browsing this list.
     Reselecting an unfinished job reloads it after a three-second interval.
-    Telescope's selection action on a job opens it in GitLab. Enable
-    keymaps.pipeline_open for an additional browser shortcut, and
-    keymaps.pipeline_back to return from jobs to the pipeline list.
+    Telescope's selection action on a job (<Enter> by default) opens its log
+    sources. Selecting a source keeps it and returns to the job list.
+    Enable keymaps.pipeline_open to open the pipeline or job in GitLab
+    (<C-o> in the README example), and keymaps.pipeline_back to return from
+    jobs to the pipeline list.
     All Telescope selection variants, including split, tab and drop, use
     these picker actions; provider entries are not opened as local files.
     Requires telescope.nvim and plenary.nvim. GitHub and Codeberg pipeline

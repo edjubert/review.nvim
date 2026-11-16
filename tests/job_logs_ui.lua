@@ -1,6 +1,6 @@
 return function(h)
   local test, eq, mocked = h.test, h.eq, h.mocked
-  local function fixture(opts, fn, interval, extra_jobs, provider_overrides)
+  local function fixture(opts, fn, interval, extra_jobs, provider_overrides, keymaps)
     local saved, pickers, buffers, timers, selection, module = {}, {}, {}, {}, nil, nil
     local function buffer()
       local buf = vim.api.nvim_create_buf(false, true)
@@ -69,7 +69,10 @@ return function(h)
     saved["review.telescope"] = package.loaded["review.telescope"]
     package.loaded["review.telescope"] = nil
     for name, value in pairs(replacements) do saved[name], package.loaded[name] = package.loaded[name], value end
-    local job = { id = 7, project_id = 23, pipeline_id = 42, name = "tests", state = "running", stage = "test" }
+    local job = {
+      id = 7, project_id = 23, pipeline_id = 42, name = "tests", state = "running", stage = "test",
+      web_url = "https://gitlab.example/group/repo/-/jobs/7",
+    }
     local pipeline = { id = 42, project_id = 23, sha = "head", state = "running", jobs = { job } }
     vim.list_extend(pipeline.jobs, extra_jobs or {})
     local provider = {
@@ -80,7 +83,7 @@ return function(h)
     }
     for name, value in pairs(provider_overrides or {}) do provider[name] = value end
     local session = {
-      config = { keymaps = {}, pipeline_refresh_interval = interval or 0, job_logs = opts },
+      config = { keymaps = keymaps or {}, pipeline_refresh_interval = interval or 0, job_logs = opts },
       target = { provider = "gitlab", project = "group/repo", host = "gitlab.example", iid = 12 },
       provider = provider, data = { mr = { diff_refs = { head_sha = "head" } } },
     }
@@ -117,7 +120,7 @@ return function(h)
         end
         fn({
           module = module, session = session, picker = picker, provider = provider,
-          content = content, choose = choose, wait = wait_for,
+          content = content, choose = choose, wait = wait_for, select = function() selection() end,
           timer = timers[#timers],
           close = function()
             picker.closed = true; picker.spec.previewer.teardown()
@@ -130,6 +133,65 @@ return function(h)
     for _, buf in ipairs(buffers) do if vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_delete(buf, { force = true }) end end
     assert(ok, err)
   end
+
+  test("job selection opens log sources while the browser shortcut only opens the job URL", function()
+    fixture({ adapters = { {
+      id = "custom", list = function() return { { id = "run", label = "Run log" } } end,
+      read = function() return "custom output\n" end,
+    } } }, function(f)
+      local opened, title = {}, f.picker.prompt_title
+      mocked({ { vim.ui, "open", function(url) opened[#opened + 1] = url; return {} end } }, function()
+        f.picker:set_prompt("tests")
+        for _, mode in ipairs({ "i", "n" }) do f.picker.maps[mode .. "<C-o>"]() end
+        eq(opened, { f.picker:get_selection().value.web_url, f.picker:get_selection().value.web_url })
+        eq(f.picker.prompt_title, title)
+        eq(f.picker:_get_prompt(), "tests")
+        f.select()
+        eq(#opened, 2)
+        eq(f.picker.closed, false)
+        eq(f.picker.prompt_title, "Job #7 log sources")
+        f.picker:set_selection(1)
+        assert(f.content():find("custom output", 1, true))
+        f.picker.maps["i<C-o>"]()
+        eq(#opened, 3)
+        eq(opened[3], "https://gitlab.example/group/repo/-/jobs/7")
+        eq(f.picker.prompt_title, "Job #7 log sources")
+        f.select()
+        eq(#opened, 3)
+        eq(f.picker.prompt_title, title)
+        eq(f.picker:_get_prompt(), "tests")
+        eq(f.picker:get_selection().value.id, 7)
+        assert(f.content():find("custom output", 1, true))
+        assert(f.picker.results_title:find("Select: log sources", 1, true))
+        f.close()
+      end)
+    end, nil, nil, nil, { pipeline_open = "<C-o>" })
+  end)
+
+  test("selecting a downstream trigger reports unavailable logs without opening the browser", function()
+    local url = "https://gitlab.example/group/repo/-/pipelines/43"
+    fixture({}, function(f)
+      f.picker:set_selection(1)
+      eq(f.picker:get_selection().value.id, 8)
+      local opened, messages, title = {}, {}, f.picker.prompt_title
+      mocked({
+        { vim.ui, "open", function(value) opened[#opened + 1] = value; return {} end },
+        { vim, "notify", function(message) messages[#messages + 1] = message end },
+      }, function()
+        f.select()
+        eq(#opened, 0)
+        assert(messages[#messages]:find("Downstream triggers do not have job logs.", 1, true))
+        eq(f.picker.prompt_title, title)
+        eq(f.picker.closed, false)
+        f.picker.maps["n<C-o>"]()
+        eq(opened, { url })
+        f.close()
+      end)
+    end, nil, { {
+      id = 8, name = "trigger", stage = "test", state = "running", trigger = true,
+      downstream = { id = 43, web_url = url },
+    } }, nil, { pipeline_open = "<C-o>" })
+  end)
 
   test("job log selection preserves the trace, renders custom ANSI and leaves cancellation unchanged", function()
     fixture({ adapters = { {

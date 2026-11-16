@@ -528,8 +528,8 @@ to change these colors and stage headings.
 | Picker | Key | Action |
 | --- | --- | --- |
 | Pipelines | Telescope's selection action | Browse the selected pipeline's jobs |
-| Jobs | Telescope's selection action | Open the selected job in GitLab |
-| Pipelines or jobs | Optional `keymaps.pipeline_open` | Open the selected pipeline or job in GitLab |
+| Jobs | Telescope's selection action (`<Enter>` by default) | Choose a log source in the same picker |
+| Pipelines, jobs or log sources | Optional `keymaps.pipeline_open` (`<C-o>` in the example) | Open the selected pipeline or job in GitLab |
 | Jobs | Optional `keymaps.pipeline_back` | Return to the pipeline list |
 | Jobs | `:ReviewJobRefresh` or optional `keymaps.pipeline_refresh` (`<C-r>` in the example) | Reload the selected job's metadata and log, bypassing the cache |
 | Jobs | `:ReviewJobLogs` or optional `keymaps.pipeline_logs` (`<C-l>` in the example) | Choose a log source in the same Telescope picker; Escape returns to jobs |
