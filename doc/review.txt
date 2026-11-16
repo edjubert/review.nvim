@@ -483,6 +483,8 @@ Campaigns share the parent's content, pending reads and streaming cursor;
 manual and focused automatic refresh filter its latest content again.
 Reopen the chooser to discover new campaigns. Discovery uses the bounded log
 tail, so older campaigns may disappear from the list.
+An adapter source with split=false skips campaign discovery without reading
+its content, for example an individual run's artifact.
 Invalid rules warn and keep the full source; a preview split failure displays
 the full log with a warning. Parser failures skip splitting.
 
@@ -496,7 +498,8 @@ Adapters are tables with a unique id containing letters, digits, _ or -.
 gitlab-trace and gitlab-artifacts are reserved IDs. Hooks:
   match(ctx)                  Optional; return false to skip this adapter.
   list(ctx)                   Return a list of sources with unique id and an
-                              optional label. Extra fields are passed through.
+                              optional label. split=false skips splitting this
+                              source. Extra fields are passed through.
   read(ctx, source, cursor)   Return snapshot text or a table with string
                               content, an optional cursor and mode="replace".
                               mode="append" adds fragments and requires a

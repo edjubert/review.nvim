@@ -742,6 +742,8 @@ cursor; browsing them does not start a separate stream. Manual and focused
 automatic refresh update the parent and filter the selected campaign again.
 Reopen the chooser to discover campaigns that appeared later. Discovery uses
 the same bounded log tail, so older campaigns may no longer be listed.
+An adapter can return a source with `split = false` to skip campaign discovery
+for that source without reading it, for example an individual run's artifact.
 An invalid rule reports a warning and keeps the full source available;
 a split failure during preview shows the full log with an explicit warning.
 A parser failure skips splitting and shows the original content.
@@ -778,7 +780,7 @@ return {
 | --- | --- |
 | `id` | Required unique adapter ID using letters, digits, `_` or `-`; `gitlab-trace` and `gitlab-artifacts` are reserved |
 | `match(ctx)` | Optional; return false to skip this adapter for the selected job |
-| `list(ctx)` | Required; return a list of `{ id = "...", label = "..." }` sources. IDs are unique within the adapter; label defaults to ID. Additional fields are passed to `read` and `parse` |
+| `list(ctx)` | Required; return a list of `{ id = "...", label = "..." }` sources. IDs are unique within the adapter; label defaults to ID. `split = false` disables campaign discovery for that source. Additional fields are passed to `read` and `parse` |
 | `read(ctx, source, cursor)` | Required; return a full text snapshot, or `{ content = "...", cursor = ..., mode = "replace" }`. Use `mode = "append"` for new fragments and include a cursor for the next read |
 | `parse(content, ctx, source)` | Optional; return display text, which can include ANSI styling. Runs on the accumulated, bounded raw log, not just the newest fragment |
 | `split(line, ctx, source)` | Optional; return a nonempty campaign name or `nil`. Runs on parsed lines without their newline; overrides `job_logs.split` |

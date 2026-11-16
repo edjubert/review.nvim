@@ -190,7 +190,7 @@ function M.new(session, pipeline)
     for _, item in ipairs(sources) do
       if closed then break end
       expanded[#expanded + 1] = item
-      local split = item.adapter.split or opts.split
+      local split = item.data.split ~= false and (item.adapter.split or opts.split)
       if split then
         -- Discovery is opt-in and only reads logs when the chooser is opened.
         -- Campaigns reuse this source's snapshot and streaming cursor.

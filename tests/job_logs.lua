@@ -218,6 +218,30 @@ return function(h)
     end)
   end)
 
+  test("sources can opt out of splitting without reading their content during discovery", function()
+    local reads = {}
+    local c = controller({
+      adapters = { {
+        id = "runs",
+        list = function()
+          return { { id = "steps" }, { id = "artifact", split = false } }
+        end,
+        read = function(_, item)
+          reads[#reads + 1] = item.id
+          return "[a_run] log\n"
+        end,
+        split = function(line) return line:match("%[([%w_]+)%]") end,
+      } },
+    })
+    local sources, errors = c.list(job)
+    eq(#sources, 4); eq(errors, {})
+    eq(reads, { "steps" })
+    eq(sources[3].campaign, "a_run")
+    eq(sources[4].data.id, "artifact")
+    eq(c.read(job, sources[4]).trace, "[a_run] log\n")
+    eq(reads, { "steps", "artifact" })
+  end)
+
   test("campaign refreshes share the parent cursor, retain filtered content on failure and reset with snapshots", function()
     local calls, fail, replace, cursors = 0, false, false, {}
     local custom = {
