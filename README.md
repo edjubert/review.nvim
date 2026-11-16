@@ -32,7 +32,7 @@ pipeline, reviewer decisions and two of five files viewed. `:ReviewViewed` and
 - See the latest pipeline/check status and reviewer decisions in the panel.
 - Browse GitLab MR pipelines and their jobs in Telescope.
 - Preview GitLab job traces, individual artifacts and custom log sources, with optional
-  parsers and streaming adapters configured in Lua.
+  parsers, campaign splitting and streaming adapters configured in Lua.
 - Search review commands and configured shortcuts in Telescope.
 - Approve the open MR/PR or request changes with explicit commands.
 - Resolve a GitLab conversation, or confirm resolving all open MR conversations.
@@ -608,8 +608,8 @@ Pipeline details for GitHub and Codeberg are not implemented.
 
 ### Custom job logs
 
-No additional source or parser is enabled by default. Configure exact artifact
-paths, a different trace endpoint, or adapters in your own Neovim configuration.
+No additional source, parser or campaign split is enabled by default. Configure
+exact artifact paths, a different trace endpoint, or adapters in your own Neovim configuration.
 The plugin does not assume an application log format.
 
 `:ReviewJobLogs` works from the jobs picker or its preview. The standard job
@@ -692,6 +692,60 @@ Parsers return text and may include ANSI styling. `review.nvim` handles buffers,
 colors, timestamps and preview limits. A parser error displays the original
 content with a warning.
 
+#### Split logs by test campaign
+
+Set `job_logs.split(line, ctx, source)` to return a campaign name for each
+recognized line, or `nil` to leave it only in the full log. It runs **after
+parsing**, so it can split an existing custom parsed source. An adapter's
+`split` hook takes precedence over this fallback.
+
+For example, this rule splits tagged CI steps from the job trace. It recognizes
+lines such as `[gesteam_first_run] ▶ load: load-csv gesteam-csv` or
+`[immopen_first_run] ✓ transform: transform (3m12s)`. The campaign names come
+from the log; the rule also handles `second_run`, `graph_run`, `extraction`
+and `compare_with_main` without enumerating them:
+
+```lua
+require("review").setup({
+  job_logs = {
+    split = function(line, _, source)
+      if source.id ~= "trace" then return end
+      local name, marker = line:match("%[([%w_-]+)%]%s+(%S+)")
+      if marker == "▶" or marker == "✓" or marker == "✗" then
+        return name
+      end
+    end,
+  },
+})
+```
+
+To split only an adapter's parsed source, use its source ID instead of `"trace"`
+or add the rule directly to that adapter:
+
+```lua
+split = function(line, _, source)
+  if source.id ~= "ci-steps" then return end -- your adapter's source ID
+  return line:match("%[([%w_-]+)%]")
+end,
+```
+
+The source chooser retains the full source and adds entries such as
+`CI steps (parsed trace) · gesteam_first_run` in order of first appearance.
+Selecting a campaign shows only its tagged lines, in their original order,
+even when several campaigns are interleaved. Line endings and ANSI styling
+are preserved. The classifier receives each line without its newline.
+Unrecognized lines remain accessible in the full source.
+
+Opening the chooser discovers campaigns from each source with a split rule.
+Campaign previews share the parent's content, pending reads and streaming
+cursor; browsing them does not start a separate stream. Manual and focused
+automatic refresh update the parent and filter the selected campaign again.
+Reopen the chooser to discover campaigns that appeared later. Discovery uses
+the same bounded log tail, so older campaigns may no longer be listed.
+An invalid rule reports a warning and keeps the full source available;
+a split failure during preview shows the full log with an explicit warning.
+A parser failure skips splitting and shows the original content.
+
 #### Add a log adapter
 
 Adapters are ordinary Lua tables supplied by your configuration or a separate
@@ -727,6 +781,7 @@ return {
 | `list(ctx)` | Required; return a list of `{ id = "...", label = "..." }` sources. IDs are unique within the adapter; label defaults to ID. Additional fields are passed to `read` and `parse` |
 | `read(ctx, source, cursor)` | Required; return a full text snapshot, or `{ content = "...", cursor = ..., mode = "replace" }`. Use `mode = "append"` for new fragments and include a cursor for the next read |
 | `parse(content, ctx, source)` | Optional; return display text, which can include ANSI styling. Runs on the accumulated, bounded raw log, not just the newest fragment |
+| `split(line, ctx, source)` | Optional; return a nonempty campaign name or `nil`. Runs on parsed lines without their newline; overrides `job_logs.split` |
 
 `ctx` contains `provider`, `host`, `project`, `project_id` when available,
 `pipeline_id`, `job_id`, and snapshots of `target`, `pipeline` and `job`.
@@ -1041,7 +1096,7 @@ require("review").setup({
   panel_width = 44,
   inline_comments = false, -- initially show only discussion markers
   pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables polling
-  job_logs = {},          -- standard trace; optional artifacts, adapters and parser
+  job_logs = {},          -- standard trace; optional artifacts, adapters, parser and campaign split
   keymaps = {},           -- all shortcuts disabled; see Optional buffer mappings
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected

@@ -47,6 +47,7 @@ function M.validate(opts)
     paths[path] = true
   end
   assert(opts.parse == nil or type(opts.parse) == "function", "job_logs.parse must be a function")
+  assert(opts.split == nil or type(opts.split) == "function", "job_logs.split must be a function")
   local adapters = opts.adapters == nil and {} or opts.adapters
   assert(type(adapters) == "table" and vim.islist(adapters), "job_logs.adapters must be a list")
   local ids = vim.deepcopy(reserved)
@@ -58,7 +59,7 @@ function M.validate(opts)
     for _, name in ipairs({ "list", "read" }) do
       assert(type(adapter[name]) == "function", "Job log adapter " .. adapter.id .. " needs " .. name .. "()")
     end
-    for _, name in ipairs({ "match", "parse" }) do
+    for _, name in ipairs({ "match", "parse", "split" }) do
       assert(adapter[name] == nil or type(adapter[name]) == "function",
         "Job log adapter " .. adapter.id .. "." .. name .. " must be a function")
     end
@@ -105,8 +106,27 @@ end
 function M.new(session, pipeline)
   local opts = session.config.job_logs or {}
   M.validate(opts)
-  local selections, states, closed = {}, {}, false
+  local selections, states, values, pending, closed = {}, {}, {}, {}, false
   local controller = {}
+  local function split_lines(content, ctx, item, split)
+    local groups, names = {}, {}
+    for line in content:gmatch("[^\n]*\n?") do
+      if closed then break end
+      if line ~= "" then
+        local name = split(line:gsub("\r?\n$", ""), ctx, item)
+        assert(name == nil or nonempty(name), "split() must return a nonempty campaign name or nil")
+        if name then
+          local group = names[name]
+          if not group then
+            group = { name = name, lines = {} }
+            names[name], groups[#groups + 1] = group, group
+          end
+          group.lines[#group.lines + 1] = line
+        end
+      end
+    end
+    return groups
+  end
   local trace_adapter = {
     id = "gitlab-trace",
     read = function(ctx)
@@ -166,10 +186,38 @@ function M.new(session, pipeline)
       if ok then vim.list_extend(sources, result)
       else errors[#errors + 1] = adapter.id .. ": " .. tostring(result) end
     end
-    return sources, errors
+    local expanded = {}
+    for _, item in ipairs(sources) do
+      if closed then break end
+      expanded[#expanded + 1] = item
+      local split = item.adapter.split or opts.split
+      if split then
+        -- Discovery is opt-in and only reads logs when the chooser is opened.
+        -- Campaigns reuse this source's snapshot and streaming cursor.
+        local value = controller.read(job, item)
+        if closed then break end
+        if value.log_error then errors[#errors + 1] = item.label .. ": " .. value.log_error end
+        if value.parse_error then
+          errors[#errors + 1] = item.label .. ": " .. value.parse_error
+        else
+          local ok, groups = pcall(split_lines, value.trace, controller.context(job), vim.deepcopy(item.data), split)
+          if closed then break end
+          if ok then
+            for _, group in ipairs(groups) do
+              expanded[#expanded + 1] = {
+                -- Source IDs cannot contain control characters, so this key
+                -- cannot collide with another configured source or campaign.
+                key = item.key .. "\0" .. group.name, label = item.label .. " · " .. group.name,
+                adapter = item.adapter, data = item.data, parent = item, campaign = group.name,
+              }
+            end
+          else errors[#errors + 1] = item.label .. ": " .. tostring(groups) end
+        end
+      end
+    end
+    return closed and sources or expanded, errors
   end
-  function controller.read(job, item)
-    if closed then return { source = item, deferred = true } end
+  local function read_source(job, item)
     local key = job_key(job) .. "/" .. item.key
     local previous = states[key] or { content = "" }
     local ctx = controller.context(job)
@@ -200,11 +248,43 @@ function M.new(session, pipeline)
       if parsed and type(content) == "string" then value.trace = content
       else value.parse_error = parsed and "parse() must return text" or tostring(content) end
     end
+    if closed then return { source = item, deferred = true } end
+    values[key] = value
+    return value
+  end
+  function controller.read(job, item, force)
+    if closed then return { source = item, deferred = true } end
+    local parent = item.parent or item
+    local key = job_key(job) .. "/" .. parent.key
+    local value
+    if pending[key] then
+      value = async.await(pending[key])
+    elseif item.parent and not force and values[key] then
+      value = values[key]
+    else
+      local future = async.future(function() return read_source(job, parent) end)
+      pending[key] = future
+      value = async.await(future)
+      if pending[key] == future then pending[key] = nil end
+    end
+    value = vim.tbl_extend("force", {}, value, { source = item })
+    if closed or value.deferred then return { source = item, deferred = true } end
+    if item.parent and not value.parse_error then
+      local ok, groups = pcall(split_lines, value.trace, controller.context(job), vim.deepcopy(parent.data),
+        parent.adapter.split or opts.split)
+      if closed then return { source = item, deferred = true } end
+      if ok then
+        value.trace = ""
+        for _, group in ipairs(groups) do
+          if group.name == item.campaign then value.trace = table.concat(group.lines); break end
+        end
+      else value.split_error = tostring(groups) end
+    end
     return value
   end
   function controller.close()
     closed = true
-    selections, states = {}, {}
+    selections, states, values, pending = {}, {}, {}, {}
   end
   return controller
 end

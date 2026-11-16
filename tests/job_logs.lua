@@ -44,6 +44,10 @@ return function(h)
     raises(function() logs.validate({ adapters = { { id = "gitlab-trace", list = function() end, read = function() end } } }) end, "reserved")
     raises(function() logs.validate({ adapters = { { id = "custom", list = function() end } } }) end, "read")
     raises(function() logs.validate({ parse = true }) end, "parse")
+    raises(function() logs.validate({ split = true }) end, "split")
+    local invalid_split = adapter(function() end)
+    invalid_split.split = "pattern"
+    raises(function() logs.validate({ adapters = { invalid_split } }) end, ".split")
     raises(function() logs.validate({ gitlab = false }) end, "must be a table")
     raises(function() logs.validate({ gitlab = { trace_path = false } }) end, "relative")
     raises(function() logs.validate({ adapters = false }) end, "must be a list")
@@ -138,6 +142,216 @@ return function(h)
     mocked({ { provider, "job_trace", function() return "trace" end } }, function()
       eq(global.read(job, global.selected(job)).trace, "parsed: trace")
     end)
+  end)
+
+  test("campaign splitting is opt-in and groups interleaved parsed lines without changing the full log", function()
+    local reads, parses = 0, 0
+    local content = table.concat({
+      "global setup",
+      "\27[32m[gesteam_first_run] ▶ load: load-csv gesteam-csv\27[0m",
+      "[immopen_first_run] ▶ transform: transform",
+      "[gesteam_second_run] ▶ load: load-csv gesteam-csv",
+      "[gesteam_first_run] ✓ load: load-csv gesteam-csv (9m3s)",
+      "[gesteam_compare_with_main] ▶ wait: transformation",
+      "[login_extraction] ✗ extraction: execute extraction.login.yml (4m18s)",
+    }, "\r\n")
+    local custom = {
+      id = "steps", list = function() return { { id = "ci-steps", label = "CI steps (parsed trace)" } } end,
+      read = function() reads = reads + 1; return "raw input" end,
+      parse = function(raw, ctx, item)
+        eq(raw, "raw input"); eq(ctx.job_id, 7); eq(item.id, "ci-steps")
+        parses = parses + 1
+        return content
+      end,
+    }
+    local c = controller({ adapters = { custom } })
+    eq(#c.list(job), 2); eq(reads, 0)
+    custom.split = function(line, ctx, item)
+      eq(ctx.pipeline_id, 42); eq(item.id, "ci-steps")
+      assert(not line:find("[\r\n]"), "Classifiers receive a line without its newline")
+      return line:match("%[([%w_-]+)%]")
+    end
+    local sources, errors = c.list(job)
+    eq(#sources, 7); eq(errors, {})
+    eq(sources[2].label, "CI steps (parsed trace)")
+    eq(sources[3].label, "CI steps (parsed trace) · gesteam_first_run")
+    eq(sources[4].campaign, "immopen_first_run")
+    eq(sources[5].campaign, "gesteam_second_run")
+    eq(sources[6].campaign, "gesteam_compare_with_main")
+    eq(sources[7].campaign, "login_extraction")
+    eq(c.read(job, sources[3]).trace,
+      "\27[32m[gesteam_first_run] ▶ load: load-csv gesteam-csv\27[0m\r\n"
+      .. "[gesteam_first_run] ✓ load: load-csv gesteam-csv (9m3s)\r\n")
+    eq(c.read(job, sources[7]).trace, "[login_extraction] ✗ extraction: execute extraction.login.yml (4m18s)")
+    eq(reads, 1); eq(parses, 1)
+    eq(c.read(job, sources[2]).trace, content)
+    c.select(job, sources[3])
+    eq(c.selected(job).campaign, "gesteam_first_run")
+    eq(c.selected(vim.tbl_extend("force", job, { id = 8 })).key, "gitlab-trace/trace")
+  end)
+
+  test("global split rules run after fallback parsing and adapter split rules take precedence", function()
+    local custom = {
+      id = "custom", list = function() return { { id = "one" } } end,
+      read = function() return "adapter raw" end,
+      split = function(line, _, item)
+        eq(item.id, "one"); eq(line, "[custom_run] adapter raw")
+        return "override_run"
+      end,
+    }
+    local c = controller({
+      adapters = { custom },
+      parse = function(content, _, item)
+        return "[" .. (item.id == "trace" and "trace_run" or "custom_run") .. "] " .. content
+      end,
+      split = function(line, _, item)
+        eq(item.id, "trace")
+        return line:match("%[([%w_]+)%]")
+      end,
+    })
+    mocked({ { provider, "job_trace", function() return "trace raw" end } }, function()
+      local sources, errors = c.list(job)
+      eq(#sources, 4); eq(errors, {})
+      eq(sources[2].campaign, "trace_run"); eq(sources[4].campaign, "override_run")
+      eq(c.read(job, sources[2]).trace, "[trace_run] trace raw")
+      eq(c.read(job, sources[4]).trace, "[custom_run] adapter raw")
+    end)
+  end)
+
+  test("campaign refreshes share the parent cursor, retain filtered content on failure and reset with snapshots", function()
+    local calls, fail, replace, cursors = 0, false, false, {}
+    local custom = {
+      id = "stream", list = function() return { { id = "runs" } } end,
+      split = function(line) return line:match("%[([%w_]+)%]") end,
+      read = function(_, _, cursor)
+        cursors[#cursors + 1] = cursor or 0
+        if fail then error("read failed") end
+        if replace then return "[b_run] replacement\n" end
+        calls = calls + 1
+        return { content = ("[a_run] chunk %d\n[b_run] chunk %d\n"):format(calls, calls),
+          cursor = (cursor or 0) + 1, mode = "append" }
+      end,
+    }
+    local c = controller({ adapters = { custom } })
+    local sources = c.list(job)
+    local a, b = sources[3], sources[4]
+    eq(c.read(job, a).trace, "[a_run] chunk 1\n")
+    eq(c.read(job, b).trace, "[b_run] chunk 1\n")
+    eq(c.read(job, a, true).trace, "[a_run] chunk 1\n[a_run] chunk 2\n")
+    eq(c.read(job, b).trace, "[b_run] chunk 1\n[b_run] chunk 2\n")
+    fail = true
+    local value = c.read(job, b, true)
+    eq(value.trace, "[b_run] chunk 1\n[b_run] chunk 2\n")
+    assert(value.log_error:find("read failed", 1, true))
+    fail = false
+    eq(c.read(job, a, true).trace, "[a_run] chunk 1\n[a_run] chunk 2\n[a_run] chunk 3\n")
+    eq(cursors, { 0, 1, 2, 2 })
+    replace = true
+    eq(c.read(job, a, true).trace, "")
+    eq(c.read(job, b).trace, "[b_run] replacement\n")
+    replace = false
+    eq(c.read(job, b, true).trace, "[b_run] replacement\n[b_run] chunk 4\n")
+    eq(cursors[#cursors], 0)
+    eq(c.read(vim.tbl_extend("force", job, { id = 8 }), a).trace, "[a_run] chunk 5\n")
+    eq(cursors[#cursors], 0)
+  end)
+
+  test("campaign discovery and previews isolate invalid classifiers and parser failures", function()
+    local broken = false
+    local custom = {
+      id = "custom", list = function() return { { id = "runs" }, { id = "unrelated" } } end,
+      read = function() return "[a_run] first\n[b_run] second\n" end,
+      split = function(line, _, item)
+        if item.id == "unrelated" then return end
+        if broken then
+          if line:find("first", 1, true) then return "a_run" end
+          return {}
+        end
+        return line:match("%[([%w_]+)%]")
+      end,
+    }
+    local c = controller({ adapters = { custom } })
+    local campaign = c.list(job)[3]
+    broken = true
+    local sources, errors = c.list(job)
+    eq(#sources, 3); eq(#errors, 1)
+    assert(errors[1]:find("campaign name", 1, true))
+    local value = c.read(job, campaign, true)
+    eq(value.trace, "[a_run] first\n[b_run] second\n")
+    assert(value.split_error:find("campaign name", 1, true))
+    custom.parse = function() error("invalid JSON") end
+    custom.split = function() error("must not split an unparsed log") end
+    value = c.read(job, campaign, true)
+    eq(value.trace, "[a_run] first\n[b_run] second\n")
+    assert(value.parse_error:find("invalid JSON", 1, true)); eq(value.split_error, nil)
+    sources, errors = c.list(job)
+    eq(#sources, 3); eq(#errors, 2)
+    custom.parse = nil
+    custom.read = function() error("transport failure") end
+    sources, errors = c.list(job)
+    eq(#sources, 3); eq(#errors, 4)
+  end)
+
+  test("concurrent campaign discovery shares an in-flight parent read and closing skips late classifiers", function()
+    local finish, reads, splits = nil, 0, 0
+    local c = controller({
+      split = function(line) splits = splits + 1; return line:match("%[([%w_]+)%]") end,
+    })
+    local async = require("review.async")
+    mocked({ { provider, "job_trace", function()
+      reads = reads + 1
+      return coroutine.yield(function(done) finish = done end)
+    end } }, function()
+      local trace = async.future(function() return c.read(job, c.selected(job)) end)
+      local discovery = async.future(function() return c.list(job) end)
+      eq(reads, 1)
+      finish("[a_run] first\n[b_run] second\n")
+      local sources = run(function() return async.await(discovery) end)
+      eq(#sources, 3); eq(reads, 1)
+      eq(run(function() return async.await(trace) end).trace, "[a_run] first\n[b_run] second\n")
+      local a = async.future(function() return c.read(job, sources[2], true) end)
+      local b = async.future(function() return c.read(job, sources[3], true) end)
+      eq(reads, 2)
+      finish("[a_run] refreshed\n[b_run] refreshed\n")
+      eq(run(function() return async.await(a) end).trace, "[a_run] refreshed\n")
+      eq(run(function() return async.await(b) end).trace, "[b_run] refreshed\n")
+      local late = async.future(function() return c.list(job) end)
+      local before = splits
+      c.close()
+      finish("[late_run] ignored\n")
+      eq(#run(function() return async.await(late) end), 1)
+      eq(splits, before)
+    end)
+  end)
+
+  test("closing during a campaign classifier skips subsequent lines and discards discovery or preview results", function()
+    local async = require("review.async")
+    for _, operation in ipairs({ "list", "read" }) do
+      local finish, waiting, calls = nil, false, 0
+      local c = controller({
+        split = function(line)
+          calls = calls + 1
+          if waiting then return coroutine.yield(function(done) finish = done end) end
+          return line:match("%[([%w_]+)%]")
+        end,
+      })
+      mocked({ { provider, "job_trace", function() return "[a_run] first\n[b_run] second\n" end } }, function()
+        local item = operation == "read" and c.list(job)[2] or nil
+        waiting = true
+        local before = calls
+        local future = async.future(function()
+          if item then return c.read(job, item) end
+          return c.list(job)
+        end)
+        eq(calls, before + 1)
+        c.close()
+        finish("a_run")
+        local value = run(function() return async.await(future) end)
+        if item then eq(value.deferred, true); eq(value.trace, nil)
+        else eq(#value, 1) end
+        eq(calls, before + 1)
+      end)
+    end
   end)
 
   test("adapter hooks can yield through argument-array processes without blocking other requests", function()

@@ -404,8 +404,8 @@ Local drafts are stored in state_dir/drafts/.
 
 JOB LOG SOURCES                                            *review-job-logs*
 
-Additional sources and parsing are opt-in. The plugin assumes no application
-log schema. Configure sources and parsers in your own Neovim configuration.
+Additional sources, parsing and campaign splitting are opt-in. The plugin
+assumes no application log schema. Configure them in your Neovim configuration.
 
 >lua
     job_logs = {
@@ -454,6 +454,38 @@ JSONL schema (timestamp, level, message) and preserves unrecognized lines:
     }
 <
 
+Set job_logs.split(line, ctx, source) to identify a test campaign in each
+parsed line. Return its nonempty name, or nil for an unrecognized line.
+For tagged CI steps in the trace, for example:
+
+>lua
+    job_logs = {
+      split = function(line, _, source)
+        if source.id ~= "trace" then return end
+        local name, marker = line:match("%[([%w_-]+)%]%s+(%S+)")
+        if marker == "▶" or marker == "✓" or marker == "✗" then
+          return name
+        end
+      end,
+    }
+<
+
+Names such as gesteam_first_run and immopen_first_run come from the log.
+Use your custom source ID instead of "trace" to split only its parsed output,
+or add split directly to the adapter. An adapter's rule overrides the fallback.
+The classifier receives a line without its newline, after parsing.
+
+Opening the source chooser reads sources with a split rule and adds one row
+per campaign after the full source, in order of first appearance. Selecting a
+campaign shows only its matching lines in their original order, preserving
+line endings and ANSI. Unrecognized lines remain in the full source.
+Campaigns share the parent's content, pending reads and streaming cursor;
+manual and focused automatic refresh filter its latest content again.
+Reopen the chooser to discover new campaigns. Discovery uses the bounded log
+tail, so older campaigns may disappear from the list.
+Invalid rules warn and keep the full source; a preview split failure displays
+the full log with a warning. Parser failures skip splitting.
+
 Register an adapter from your configuration or a separate plugin:
 
 >lua
@@ -471,6 +503,8 @@ gitlab-trace and gitlab-artifacts are reserved IDs. Hooks:
                               cursor for the next read.
   parse(content, ctx, source) Optional; return display text, with optional ANSI
                               styling. Receives the accumulated raw log tail.
+  split(line, ctx, source)    Optional; return a nonempty campaign name or nil.
+                              Runs after parsing; overrides job_logs.split.
 
 ctx includes provider, host, project, project_id when available, pipeline_id,
 job_id and snapshots of target, pipeline and job. ctx.system(argv, opts) runs

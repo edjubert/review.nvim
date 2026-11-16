@@ -447,6 +447,10 @@ local function job_preview(value)
     lines[#lines + 1] = "Parser failed; showing original log: " .. text(value.parse_error)
     highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
   end
+  if value.split_error then
+    lines[#lines + 1] = "Campaign split failed; showing full log: " .. text(value.split_error)
+    highlights[#highlights + 1] = { line = #lines, group = "ReviewPipelineError" }
+  end
   if value.unavailable then
     lines[#lines + 1] = value.unavailable
   elseif value.trace == nil then
@@ -541,8 +545,11 @@ function M.pipelines(session, pipelines)
       local finished = state == "success" or state == "failed" or state == "canceled" or state == "skipped"
       local erased = cached.value and type(cached.value.job.erased_at) == "string"
         and cached.value.job.erased_at ~= ""
-      if not force and cached.value and not cached.value.deferred
-          and ((finished and not cached.value.log_error and not cached.value.parse_error and not cached.value.details_error
+      -- Campaign previews use the controller's latest shared source snapshot,
+      -- including output fetched while previewing another campaign.
+      if not force and not source.parent and cached.value and not cached.value.deferred
+          and ((finished and not cached.value.log_error and not cached.value.parse_error
+              and not cached.value.split_error and not cached.value.details_error
               and (cached.value.trace ~= "" or erased))
             or vim.uv.now() - cached.updated < 3000) then
         done(cached.value)
@@ -573,7 +580,7 @@ function M.pipelines(session, pipelines)
       if not session_open() or not active then
         value.deferred = true
       else
-        local result = logs.read(value.job, source)
+        local result = logs.read(value.job, source, force)
         for name, field in pairs(result) do value[name] = field end
       end
       finish(value)

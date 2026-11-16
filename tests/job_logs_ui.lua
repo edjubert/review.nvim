@@ -256,6 +256,86 @@ return function(h)
     end)
   end)
 
+  test("campaign previews stay filtered through polling, source changes and cancellation", function()
+    local reads = 0
+    fixture({ adapters = { {
+      id = "steps", list = function() return { { id = "ci-steps", label = "CI steps (parsed trace)" } } end,
+      read = function(_, _, cursor)
+        eq(cursor or 0, reads)
+        reads = reads + 1
+        return { content = ("[gesteam_first_run] ▶ load %d\n[immopen_first_run] ▶ transform %d\n")
+          :format(reads, reads), cursor = reads, mode = "append" }
+      end,
+      split = function(line) return line:match("%[([%w_]+)%]") end,
+    } } }, function(f)
+      f.picker:set_prompt("tests")
+      f.choose(4)
+      eq(reads, 1)
+      assert(f.content():find("Log · CI steps (parsed trace) · immopen_first_run", 1, true))
+      assert(f.content():find("[immopen_first_run] ▶ transform 1", 1, true))
+      assert(not f.content():find("gesteam_first_run", 1, true))
+      f.wait(function() return f.timer.active end)
+      f.timer.callback()
+      f.wait(function() return reads == 2 end)
+      assert(f.content():find("[immopen_first_run] ▶ transform 2", 1, true))
+      assert(not f.content():find("gesteam_first_run", 1, true))
+      f.choose(3)
+      eq(reads, 3)
+      assert(f.content():find("[gesteam_first_run] ▶ load 3", 1, true))
+      assert(not f.content():find("immopen_first_run", 1, true))
+      f.module.refresh_job(f.session)
+      eq(reads, 4)
+      f.choose(4)
+      eq(reads, 5)
+      assert(f.content():find("[immopen_first_run] ▶ transform 5", 1, true),
+        "Another campaign's refresh must invalidate a cached campaign preview")
+      assert(not f.content():find("gesteam_first_run", 1, true))
+      f.module.select_job_log(f.session)
+      eq(reads, 6)
+      eq(f.picker.spec.finder.results[3].display, "CI steps (parsed trace) · gesteam_first_run")
+      f.picker:set_selection(2)
+      assert(f.content():find("[gesteam_first_run] ▶ load 6", 1, true))
+      eq(reads, 6)
+      f.picker.maps["n<Esc>"]()
+      eq(f.picker:_get_prompt(), "tests")
+      eq(f.picker:get_selection().value.id, 7)
+      assert(f.content():find("[immopen_first_run] ▶ transform 6", 1, true))
+      assert(not f.content():find("gesteam_first_run", 1, true))
+      f.close()
+    end, 1000)
+  end)
+
+  test("campaign discovery finds new runs and a failed split warns before showing the full log", function()
+    local reads, broken = 0, false
+    fixture({ adapters = { {
+      id = "steps", list = function() return { { id = "ci-steps", label = "CI steps" } } end,
+      read = function()
+        reads = reads + 1
+        return "[gesteam_first_run] ▶ load\n"
+          .. (reads > 1 and "[immopen_first_run] ✗ transform\n" or "")
+      end,
+      split = function(line)
+        if broken then error("invalid campaign rule") end
+        return line:match("%[([%w_]+)%]")
+      end,
+    } } }, function(f)
+      f.choose(3)
+      assert(f.content():find("gesteam_first_run", 1, true))
+      f.module.refresh_job(f.session)
+      assert(not f.content():find("immopen_first_run", 1, true))
+      f.choose(4)
+      assert(f.content():find("Log · CI steps · immopen_first_run", 1, true))
+      assert(not f.content():find("gesteam_first_run", 1, true))
+      broken = true
+      f.module.refresh_job(f.session)
+      assert(f.content():find("Campaign split failed; showing full log", 1, true))
+      assert(f.content():find("invalid campaign rule", 1, true))
+      assert(f.content():find("gesteam_first_run", 1, true))
+      assert(f.content():find("immopen_first_run", 1, true))
+      f.close()
+    end)
+  end)
+
   test("a late hovered source cannot overwrite the next highlighted source", function()
     local finish
     fixture({ adapters = { {
