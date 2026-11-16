@@ -13,8 +13,12 @@ end
 function M.request(target, endpoint, body, method, raw)
   local argv = {
     "gh", "api", "--hostname", target.host, "--method", method or (body and "POST" or "GET"),
-    "-H", "Accept: application/vnd.github+json", endpoint,
+    "-H", "Accept: application/vnd.github+json",
   }
+  -- Raw log responses carry ANSI escape sequences that gh refuses to print
+  -- by default; the shared job log renderer normalizes them itself.
+  if raw then vim.list_extend(argv, { "--allow-escape-sequences" }) end
+  vim.list_extend(argv, { endpoint })
   local opts = {}
   if body then
     vim.list_extend(argv, { "--input", "-" })

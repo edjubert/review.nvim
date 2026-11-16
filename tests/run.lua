@@ -1658,6 +1658,22 @@ test("GitHub job details merge the workflow job of Actions check runs", function
   end)
 end)
 
+test("GitHub job traces allow the escape sequences gh refuses to print by default", function()
+  local github, async, captured = require("review.providers.github"),
+    require("review.async"), {}
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  mocked({ { async, "checked", function(argv)
+    captured[#captured + 1] = argv
+    return "log \27[32mline\27[0m"
+  end } }, function()
+    eq(github.job_trace(gh_target, { id = 5 }), "log \27[32mline\27[0m")
+    eq(vim.tbl_contains(captured[1], "--allow-escape-sequences"), true)
+    eq(captured[1][#captured[1]], "repos/owner/repo/actions/jobs/5/logs")
+    raises(function() github.job_trace(gh_target, { id = 0 }) end, "valid GitHub ID")
+    eq(#captured, 1)
+  end)
+end)
+
 test("Codeberg status uses commit statuses and ignores private pending reviews", function()
   local codeberg = require("review.providers.codeberg")
   local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/12"))
