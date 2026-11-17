@@ -64,6 +64,10 @@ local root = vim.fn.tempname()
 vim.fn.mkdir(root, "p")
 local config = {
   state_dir = root .. "/state", cache_dir = root .. "/cache", panel_width = 30,
+  stack_icons = {
+    approved = "👌", changes_requested = "👎",
+    pipeline_success = "✅", pipeline_running = "🔄", pipeline_failed = "❌",
+  },
   -- Mapping fixtures opt in explicitly; the plugin has no default shortcuts.
   keymaps = {
     comment = "<leader>rc", submit = "<leader>rs", refresh = "<leader>rr",
@@ -610,6 +614,9 @@ test("inline discussions default to hidden and validate their configuration", fu
   eq(review.config.keymaps.toggle_comments, false)
   raises(function() review.setup({ inline_comments = "yes" }) end, "must be a boolean")
   raises(function() review.setup({ keymaps = { toggle_comments = true } }) end, "toggle_comments")
+  eq(review.config.stack_icons.approved, "👌")
+  raises(function() review.setup({ stack_icons = { approved = 1 } }) end, "stack_icons.approved")
+  raises(function() review.setup({ stack_icons = { unknown = "x" } }) end, "Unknown stack_icons.unknown")
   review.setup(before)
   local s = inline_fixture()
   eq(s.inline_comments, false)

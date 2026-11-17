@@ -125,6 +125,42 @@ function M.stack(target, mr)
   return require("review.stack").build(stack_entry(mr), M.open_reviews(target))
 end
 
+-- One aliased query keeps a stack's statuses to a single request. GitLab
+-- exposes change requests as a merge status, not as a per-reviewer count.
+function M.stack_status(target, entries)
+  if #entries == 0 then return {} end
+  local fields = {}
+  for index, entry in ipairs(entries) do
+    fields[index] = ("m%d: mergeRequest(iid: \"%d\") { headPipeline { status } "
+      .. "approvedBy { nodes { username } } approvalsRequired detailedMergeStatus }"):format(index, entry.iid)
+  end
+  local result = M.request(target, "graphql", {
+    query = "{ project(fullPath: " .. vim.json.encode(target.project) .. ") { "
+      .. table.concat(fields, " ") .. " } }",
+  })
+  local data = type(result) == "table" and result.data
+  local project = type(data) == "table" and data.project
+  if type(project) ~= "table" then error("GitLab did not return the stack statuses.", 0) end
+  local statuses = {}
+  for index, entry in ipairs(entries) do
+    local node = project["m" .. index]
+    if type(node) ~= "table" then
+      error("GitLab did not return the status of !" .. entry.iid .. ".", 0)
+    end
+    local pipeline = type(node.headPipeline) == "table" and node.headPipeline.status or nil
+    local approvals = type(node.approvedBy) == "table" and type(node.approvedBy.nodes) == "table"
+      and #node.approvedBy.nodes or 0
+    local required = type(node.approvalsRequired) == "number" and node.approvalsRequired or 0
+    statuses[entry.iid] = {
+      pipeline = type(pipeline) == "string" and status.pipeline({ pipeline:lower() }) or "none",
+      approvals = approvals,
+      changes_requested = node.detailedMergeStatus == "REQUESTED_CHANGES" and 1 or 0,
+      approved = approvals >= required,
+    }
+  end
+  return statuses
+end
+
 local function comment_metadata(target, discussion)
   for _, note in ipairs(discussion.notes or {}) do
     if not note.system and type(note.id) == "number" and note.id > 0 and note.id % 1 == 0 then

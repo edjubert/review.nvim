@@ -32,6 +32,9 @@ function M.highlights()
     ReviewStatusOk = "DiagnosticOk",
     ReviewStatusWarn = "DiagnosticWarn",
     ReviewStatusError = "DiagnosticError",
+    ReviewStackReady = "DiagnosticOk",
+    ReviewStackPending = "DiagnosticInfo",
+    ReviewStackBlocked = "DiagnosticError",
     ReviewCommentBorder = "FloatBorder",
     ReviewCommentAuthor = "Title",
     ReviewCommentBody = "NormalFloat",
@@ -362,6 +365,7 @@ function M.focus_panel_entry(session, wanted)
   for row, item in pairs(session.panel_entries or {}) do
     if (wanted.file and item.file == wanted.file)
         or (wanted.directory and item.directory == wanted.directory)
+        or (wanted.stack ~= nil and item.stack == wanted.stack)
         or (wanted.commit ~= nil and item.commit == wanted.commit) then
       vim.api.nvim_win_set_cursor(session.panel_win, { row, 0 })
       return true
@@ -516,6 +520,10 @@ function M.panel_action(session, action)
   if not M.valid(session) or not vim.api.nvim_win_is_valid(session.panel_win) then return end
   local row = vim.api.nvim_win_get_cursor(session.panel_win)[1]
   local item = (session.panel_entries or {})[row]
+  if item and item.stack and (action == "open" or action == "right") then
+    session:open_stack_entry(session.stack.entries[item.stack])
+    return
+  end
   if not session.files or #session.files == 0 then
     if item and item.commit ~= nil and (action == "open" or action == "right") then
       session:select_commit(item.commit)
@@ -567,37 +575,66 @@ function M.panel_action(session, action)
   end
 end
 
--- Keep the current review visible when a long stack does not fit the panel.
-local function stack_line(session, stack)
+local function display_width(text)
+  return vim.fn.strdisplaywidth(text)
+end
+
+local function truncate(text, width)
+  if width <= 0 then return "" end
+  if display_width(text) <= width then return text end
+  local limit, low, high = math.max(0, width - 1), 0, vim.fn.strchars(text)
+  while low < high do
+    local middle = math.ceil((low + high) / 2)
+    if display_width(vim.fn.strcharpart(text, 0, middle)) <= limit then low = middle
+    else high = middle - 1 end
+  end
+  return vim.fn.strcharpart(text, 0, low) .. "…"
+end
+
+local function stack_icons(session, status)
+  if not status then return "" end
+  local icons, parts = session.config.stack_icons or {}, {}
+  local function add(icon, count)
+    if type(icon) ~= "string" or icon == "" then return end
+    for _ = 1, count do parts[#parts + 1] = icon end
+  end
+  add(icons.approved, status.approvals or 0)
+  add(icons.changes_requested, status.changes_requested or 0)
+  if status.pipeline == "success" then add(icons.pipeline_success, 1)
+  elseif status.pipeline == "failed" then add(icons.pipeline_failed, 1)
+  elseif status.pipeline == "running" or status.pipeline == "pending" then add(icons.pipeline_running, 1) end
+  return table.concat(parts, " ")
+end
+
+local function stack_group(status)
+  if not status then return "ReviewHelp" end
+  if (status.changes_requested or 0) > 0 or status.pipeline == "failed" then return "ReviewStackBlocked" end
+  if status.approved and status.pipeline == "success" then return "ReviewStackReady" end
+  return "ReviewStackPending"
+end
+
+-- One line per review, with its approvals, change requests and pipeline.
+local function stack_lines(session, stack)
   local width = session.panel_win and vim.api.nvim_win_is_valid(session.panel_win)
     and vim.api.nvim_win_get_width(session.panel_win) or (session.config.panel_width or 44)
   width = math.max(12, width - 1)
-  local head = ("Stack %d/%d · "):format(stack.index, #stack.entries)
-  local labels = {}
-  for _, entry in ipairs(stack.entries) do
-    labels[#labels + 1] = session.provider.prefix .. entry.iid
+  local lines = {}
+  for index, entry in ipairs(stack.entries) do
+    local current = index == stack.index
+    local marker = current and "▶ " or "  "
+    local label = session.provider.prefix .. entry.iid
+    local icons = stack_icons(session, entry.status)
+    local head = marker .. label .. (icons ~= "" and (" " .. icons) or "") .. " "
+    local title = truncate(entry.title or "", width - display_width(head))
+    lines[#lines + 1] = {
+      text = head .. title, index = index,
+      label_start = 0, label_finish = #marker + #label,
+      label_group = current and "ReviewPanelTitle" or "ReviewHelp",
+      title_start = #head, title_finish = #head + #title,
+      title_group = stack_group(entry.status),
+    }
   end
-  local first, last = 1, #labels
-  local function render()
-    local parts = {}
-    if first > 1 then parts[#parts + 1] = "…" end
-    for index = first, last do parts[#parts + 1] = labels[index] end
-    if last < #labels then parts[#parts + 1] = "…" end
-    local start = #head
-    for index = 1, (first > 1 and 1 or 0) do start = start + #parts[index] + 1 end
-    for index = first, stack.index - 1 do start = start + #labels[index] + 1 end
-    return head .. table.concat(parts, " "), start, start + #labels[stack.index]
-  end
-  local text, start, finish = render()
-  while #text > width and (first < stack.index or last > stack.index) do
-    if last > stack.index and (first == 1 or last - stack.index >= stack.index - first) then
-      last = last - 1
-    else
-      first = first + 1
-    end
-    text, start, finish = render()
-  end
-  return text, start, finish
+  return lines
 end
 
 function M.panel(session)
@@ -618,10 +655,18 @@ function M.panel(session)
     decorations[#decorations + 1] = { line = line, start = start, finish = finish, group = group }
   end
   if session.stack then
-    local text, start, finish = stack_line(session, session.stack)
-    lines[#lines + 1] = text
-    highlight(#lines, 0, #text, "ReviewHelp")
-    highlight(#lines, start, finish, "ReviewPanelTitle")
+    for _, line in ipairs(stack_lines(session, session.stack)) do
+      lines[#lines + 1] = line.text
+      session.panel_entries[#lines] = { stack = line.index }
+      highlight(#lines, line.label_start, line.label_finish, line.label_group)
+      if line.title_finish > line.title_start then
+        highlight(#lines, line.title_start, line.title_finish, line.title_group)
+      end
+    end
+    if session.stack_status_error then
+      lines[#lines + 1] = "Stack status: unavailable"
+      highlight(#lines, 0, #lines[#lines], "ReviewStatusWarn")
+    end
   elseif session.stack_error then
     lines[#lines + 1] = "Stack: unavailable"
     highlight(#lines, 0, #lines[#lines], "ReviewStatusWarn")

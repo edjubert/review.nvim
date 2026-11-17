@@ -97,37 +97,177 @@ return function(h)
     end)
   end)
 
-  test("the panel shows the stack position and the current review", function()
+  test("the panel lists every review and marks the current one", function()
     local s = h.fixture()
     s.stack = { entries = chain, index = 1 }
     ui.panel(s)
-    local text = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), "\n")
-    assert(text:find("Stack 1/4 · !12 !13 !14 !15", 1, true), text)
-    local line = vim.api.nvim_buf_get_lines(s.panel_buf, 1, 2, false)[1]
-    local start = assert(line:find("!12", 1, true)) - 1
+    eq(vim.api.nvim_buf_get_lines(s.panel_buf, 1, 5, false), {
+      "▶ !12 Review 12", "  !13 Review 13", "  !14 Review 14", "  !15 Review 15",
+    })
     local highlighted = false
     for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(s.panel_buf,
         vim.api.nvim_create_namespace("review.panel"), 0, -1, { details = true })) do
-      if mark[2] == 1 and mark[3] == start and mark[4].end_col == start + 3
-          and mark[4].hl_group == "ReviewPanelTitle" then highlighted = true end
+      if mark[2] == 1 and mark[3] == 0 and mark[4].hl_group == "ReviewPanelTitle" then
+        highlighted = true
+      end
     end
     assert(highlighted, "the current review is not highlighted")
     s:close()
   end)
 
-  test("a long stack keeps the current review visible", function()
+  test("stack entries show approvals, change requests and the pipeline", function()
+    local s = h.fixture()
+    local entries = {
+      { iid = 12, title = "Ready", url = "u12",
+        status = { pipeline = "success", approvals = 2, changes_requested = 0, approved = true } },
+      { iid = 13, title = "Blocked", url = "u13",
+        status = { pipeline = "failed", approvals = 0, changes_requested = 1, approved = false } },
+      { iid = 14, title = "Waiting", url = "u14",
+        status = { pipeline = "running", approvals = 0, changes_requested = 0, approved = false } },
+      { iid = 15, title = "Unknown", url = "u15" },
+    }
+    s.stack = { entries = entries, index = 1 }
+    ui.panel(s)
+    eq(vim.api.nvim_buf_get_lines(s.panel_buf, 1, 5, false), {
+      "▶ !12 👌 👌 ✅ Ready", "  !13 👎 ❌ Blocked", "  !14 🔄 Waiting", "  !15 Unknown",
+    })
+    local groups = {}
+    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(s.panel_buf,
+        vim.api.nvim_create_namespace("review.panel"), 0, -1, { details = true })) do
+      groups[mark[2]] = groups[mark[2]] or {}
+      groups[mark[2]][mark[4].hl_group or mark[4].line_hl_group] = true
+    end
+    assert(groups[1].ReviewStackReady, "a ready review is not green")
+    assert(groups[2].ReviewStackBlocked, "a blocked review is not red")
+    assert(groups[3].ReviewStackPending, "a waiting review is not blue")
+    assert(groups[4].ReviewHelp, "an unknown review has no neutral title")
+    s:close()
+  end)
+
+  test("stack icons come from the configuration", function()
+    local s = h.fixture({ stack_icons = {
+      approved = "A", changes_requested = "C",
+      pipeline_success = "S", pipeline_running = "R", pipeline_failed = "F",
+    } })
+    s.stack = { entries = {
+      { iid = 12, title = "Ready", url = "u12",
+        status = { pipeline = "success", approvals = 1, changes_requested = 0, approved = true } },
+      { iid = 13, title = "Blocked", url = "u13",
+        status = { pipeline = "failed", approvals = 0, changes_requested = 2, approved = false } },
+    }, index = 1 }
+    ui.panel(s)
+    eq(vim.api.nvim_buf_get_lines(s.panel_buf, 1, 3, false), {
+      "▶ !12 A S Ready", "  !13 C C F Blocked",
+    })
+    s:close()
+  end)
+
+  test("a long stack truncates titles and keeps the current review visible", function()
     local s = h.fixture()
     local entries = {}
-    for iid = 1, 12 do entries[iid] = entry(iid, "b" .. iid, iid == 1 and "main" or ("b" .. (iid - 1))) end
+    for iid = 1, 12 do
+      entries[iid] = entry(iid, "b" .. iid, iid == 1 and "main" or ("b" .. (iid - 1)))
+      entries[iid].title = "A long review title that does not fit the panel " .. iid
+    end
     s.stack = { entries = entries, index = 9 }
     ui.panel(s)
-    local text = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), "\n")
-    local line = text:match("Stack 9/12[^\n]*")
-    assert(line, text)
-    assert(line:find("!9", 1, true), line)
-    assert(line:find("…", 1, true), line)
-    assert(#line <= vim.api.nvim_win_get_width(s.panel_win) - 1, line)
+    local lines = vim.api.nvim_buf_get_lines(s.panel_buf, 1, 13, false)
+    eq(#lines, 12)
+    assert(lines[9]:sub(1, #"▶ !9") == "▶ !9", lines[9])
+    for _, line in ipairs(lines) do
+      assert(vim.fn.strdisplaywidth(line) <= vim.api.nvim_win_get_width(s.panel_win) - 1, line)
+      assert(line:find("…", 1, true), line)
+    end
     s:close()
+  end)
+
+  test("opening a stack line loads that review", function()
+    local s = h.fixture()
+    s.stack = { entries = chain, index = 1 }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 3, 0 })
+    local opened
+    mocked({ { review, "open", function(value) opened = value end } }, function()
+      ui.panel_action(s, "open")
+    end)
+    eq(opened, chain[2].url)
+    s:close()
+  end)
+
+  test("GitLab reads stack statuses in one aliased query", function()
+    local captured
+    mocked({ { gitlab, "request", function(t, endpoint, body)
+      eq(t, target); eq(endpoint, "graphql")
+      captured = body.query
+      return { data = { project = {
+        m1 = { headPipeline = { status = "SUCCESS" },
+          approvedBy = { nodes = { { username = "alice" }, { username = "bob" } } },
+          approvalsRequired = 1, detailedMergeStatus = "MERGEABLE" },
+        m2 = { headPipeline = { status = "FAILED" }, approvedBy = { nodes = {} },
+          approvalsRequired = 1, detailedMergeStatus = "REQUESTED_CHANGES" },
+      } } }
+    end } }, function()
+      local statuses = gitlab.stack_status(target, { { iid = 12 }, { iid = 13 } })
+      assert(captured:find('m1: mergeRequest(iid: "12")', 1, true), captured)
+      assert(captured:find('m2: mergeRequest(iid: "13")', 1, true), captured)
+      eq(statuses[12].pipeline, "success")
+      eq(statuses[12].approvals, 2)
+      eq(statuses[12].approved, true)
+      eq(statuses[12].changes_requested, 0)
+      eq(statuses[13].pipeline, "failed")
+      eq(statuses[13].approved, false)
+      eq(statuses[13].changes_requested, 1)
+    end)
+  end)
+
+  test("GitHub reads stack statuses in one aliased query", function()
+    local gh_target = assert(url.parse("https://github.example/owner/repo/pull/13"))
+    local captured
+    mocked({ { github, "request", function(t, endpoint, body)
+      eq(t, gh_target); eq(endpoint, "graphql")
+      captured = body.query
+      return { data = { repository = {
+        p1 = { reviewDecision = "APPROVED", statusCheckRollup = { state = "SUCCESS" },
+          reviews = { nodes = { { state = "APPROVED", author = { login = "alice" } } } } },
+        p2 = { reviewDecision = "CHANGES_REQUESTED", statusCheckRollup = { state = "FAILURE" },
+          reviews = { nodes = { { state = "CHANGES_REQUESTED", author = { login = "bob" } } } } },
+        p3 = { reviewDecision = vim.NIL, statusCheckRollup = vim.NIL, reviews = { nodes = {} } },
+      } } }
+    end } }, function()
+      local statuses = github.stack_status(gh_target, { { iid = 11 }, { iid = 12 }, { iid = 13 } })
+      assert(captured:find("p1: pullRequest(number: 11)", 1, true), captured)
+      eq(statuses[11].pipeline, "success")
+      eq(statuses[11].approvals, 1)
+      eq(statuses[11].approved, true)
+      eq(statuses[12].pipeline, "failed")
+      eq(statuses[12].changes_requested, 1)
+      eq(statuses[12].approved, false)
+      eq(statuses[13].pipeline, "none")
+      eq(statuses[13].approved, true)
+    end)
+  end)
+
+  test("Codeberg reads each stack entry in turn", function()
+    local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/13"))
+    mocked({
+      { codeberg, "request", function(t, endpoint)
+        eq(t, cb_target)
+        if endpoint:find("/pulls/12$") then return { head = { sha = "abc" } } end
+        if endpoint:find("/commits/abc/status$") then return { total_count = 1, state = "success" } end
+        error("Unexpected endpoint: " .. endpoint)
+      end },
+      { codeberg, "pages", function(t, endpoint)
+        eq(t, cb_target)
+        eq(endpoint, codeberg.repo_path(cb_target) .. "/pulls/12/reviews")
+        return { { state = "APPROVED", user = { login = "alice" } } }
+      end },
+    }, function()
+      local statuses = codeberg.stack_status(cb_target, { { iid = 12 } })
+      eq(statuses[12].pipeline, "success")
+      eq(statuses[12].approvals, 1)
+      eq(statuses[12].approved, true)
+    end)
   end)
 
   test("stack navigation opens the neighbouring review URL", function()

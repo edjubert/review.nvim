@@ -170,6 +170,33 @@ function M.stack(target, pr)
   return require("review.stack").build(stack_entry(pr), M.open_reviews(target))
 end
 
+-- Codeberg has no batched status query: read each pull request in turn.
+function M.stack_status(target, entries)
+  local statuses = {}
+  for _, entry in ipairs(entries) do
+    local path = M.repo_path(target) .. "/pulls/" .. entry.iid
+    local pr = M.request(target, path)
+    local sha = type(pr.head) == "table" and pr.head.sha or nil
+    local pipeline = "none"
+    if type(sha) == "string" and sha ~= "" then
+      local combined = M.request(target, M.repo_path(target) .. "/commits/" .. sha .. "/status")
+      if (combined.total_count or 0) > 0 then pipeline = status.pipeline({ combined.state or "unknown" }) end
+    end
+    local summary = status.reviews(M.pages(target, path .. "/reviews", true))
+    local changes = 0
+    for _, reviewer in ipairs(summary.reviewers) do
+      if reviewer.state == "changes_requested" then changes = changes + 1 end
+    end
+    statuses[entry.iid] = {
+      pipeline = pipeline,
+      approvals = summary.approvals,
+      changes_requested = changes,
+      approved = summary.state == "approved" or #summary.reviewers == 0,
+    }
+  end
+  return statuses
+end
+
 function M.note_reactions(target, note)
   return reactions.aggregate(M.pages(target, M.repo_path(target) .. "/issues/comments/" .. note.id .. "/reactions"))
 end

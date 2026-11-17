@@ -115,6 +115,52 @@ function M.stack(target, pr)
   return require("review.stack").build(stack_entry(pr), M.open_reviews(target))
 end
 
+-- One aliased query keeps a stack's statuses to a single request.
+function M.stack_status(target, entries)
+  if #entries == 0 then return {} end
+  local owner, name = target.project:match("^([^/]+)/(.+)$")
+  if not owner then error("Expected an owner/repository path.", 0) end
+  local fields = {}
+  for index, entry in ipairs(entries) do
+    fields[index] = ("p%d: pullRequest(number: %d) { reviewDecision statusCheckRollup { state } "
+      .. "reviews(first: 100) { nodes { state author { login } } } }"):format(index, entry.iid)
+  end
+  local result = M.request(target, "graphql", {
+    query = "{ repository(owner: " .. vim.json.encode(owner) .. ", name: " .. vim.json.encode(name)
+      .. ") { " .. table.concat(fields, " ") .. " } }",
+  })
+  local data = type(result) == "table" and result.data
+  local repository = type(data) == "table" and data.repository
+  if type(repository) ~= "table" then error("GitHub did not return the stack statuses.", 0) end
+  local statuses = {}
+  for index, entry in ipairs(entries) do
+    local node = repository["p" .. index]
+    if type(node) ~= "table" then
+      error("GitHub did not return the status of #" .. entry.iid .. ".", 0)
+    end
+    local rollup = type(node.statusCheckRollup) == "table" and node.statusCheckRollup.state or nil
+    local reviews = {}
+    for _, review in ipairs(type(node.reviews) == "table" and node.reviews.nodes or {}) do
+      local login = type(review.author) == "table" and review.author.login or nil
+      if login then reviews[#reviews + 1] = { user = { login = login }, state = review.state } end
+    end
+    local summary = status.reviews(reviews)
+    local changes = 0
+    for _, reviewer in ipairs(summary.reviewers) do
+      if reviewer.state == "changes_requested" then changes = changes + 1 end
+    end
+    statuses[entry.iid] = {
+      pipeline = type(rollup) == "string" and status.pipeline({ rollup:lower() }) or "none",
+      approvals = summary.approvals,
+      changes_requested = changes,
+      -- A null review decision means the repository requires no approval.
+      approved = node.reviewDecision == "APPROVED" or node.reviewDecision == nil
+        or node.reviewDecision == vim.NIL,
+    }
+  end
+  return statuses
+end
+
 function M.pipeline_status(target, pr)
   return status.read(function()
     local endpoint = M.repo_path(target) .. "/commits/" .. url.encode(pr.diff_refs.head_sha)

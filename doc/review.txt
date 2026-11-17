@@ -110,19 +110,29 @@ COMMANDS
     Open the complete MR/PR comparison.
 
 :ReviewStack                                                  *:ReviewStack*
-    List the reviews of the current stack with their titles and draft state,
-    then open the selected one. The current review is marked and selecting it
-    does nothing. A review without a stack reports it instead of listing.
+    List the reviews of the current stack with their full titles and draft
+    state, then open the selected one. The current review is marked and
+    selecting it does nothing. A review without a stack reports it instead of
+    listing.
 
 :ReviewStackNext / :ReviewStackPrev       *:ReviewStackNext* *:ReviewStackPrev*
-    Open the next/previous review in the stack. The panel shows the position
-    and the chain under the title, for example
-    "Stack 3/5 · !1406 !1407 !1408 !1409 !1410". Opening another review closes
-    the current review tab; local drafts stay on disk.
+    Open the next/previous review in the stack. The panel lists every review
+    under the title, with the current one marked by "▶". Each line shows one
+    icon per approval, one per change request, then the pipeline state:
+    passed, running or failed. The title is green when the approvals are
+    satisfied and the pipeline passed, blue when an approval is missing or the
+    pipeline is still running, and red when a change is requested or the
+    pipeline failed. Enter on a stack line opens that review.
+    Opening another review closes the current review tab; local drafts stay on
+    disk.
     A stack is a chain of open reviews where each one targets the source branch
     of the review below it. The chain stops at an ambiguous branch, where
     several open reviews target the same source branch. Detection reads the
-    open review list once per refresh; a failure only hides the stack line.
+    open review list once per refresh; a failure only hides the stack list.
+    Statuses use one aliased GraphQL query per refresh on GitLab and GitHub,
+    and one read per review on Codeberg. GitLab reports change requests as a
+    merge status, so it shows a single change-request icon. A failed status
+    read shows "Stack status: unavailable" and keeps the names readable.
     Enable keymaps.stack, keymaps.stack_next and keymaps.stack_prev for
     shortcuts; the optional example uses <leader>rS, ]s and [s.
 
@@ -391,6 +401,10 @@ CONFIGURATION                                                  *review-setup*
       pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables
       job_logs = {}, -- standard trace; see |review-job-logs|
       keymaps = {}, -- all mappings disabled
+      stack_icons = { -- one icon per approval, change request and pipeline state
+        approved = "👌", changes_requested = "👎",
+        pipeline_success = "✅", pipeline_running = "🔄", pipeline_failed = "❌",
+      },
       clone_protocol = "ssh",
       repo = nil,
       cache_dir = vim.fn.stdpath("cache") .. "/review",

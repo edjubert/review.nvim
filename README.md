@@ -19,7 +19,8 @@ pipeline, reviewer decisions and two of five files viewed. `:ReviewViewed` and
 - Read the MR/PR title and Markdown description.
 - Edit and publish the MR/PR description from a Markdown editor.
 - Switch between individual commits and the complete MR/PR.
-- Move between the reviews of a stack; the panel shows the position and the chain.
+- Move between the reviews of a stack; the panel lists each review with its
+  approvals, change requests and pipeline state.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
 - Filter changed files directly in the sidebar, or search them in Telescope.
@@ -345,22 +346,58 @@ opens any folds covering that line, and centers the diff view there.
 ### Review stacks
 
 A stack is a chain of open reviews where each one targets the source branch of
-the review below it. The panel shows the position and the whole chain under the
-title, for example `Stack 3/5 · !1406 !1407 !1408 !1409 !1410`, with the current
-review highlighted. Long stacks keep the current review visible and elide the
-farthest entries.
+the review below it. The panel lists every review of the stack under the title,
+with the current one marked by `▶`:
 
-`:ReviewStackNext` and `:ReviewStackPrev` open the next or previous review.
-`:ReviewStack` lists the chain with titles and drafts, and opens the selected
-review. Opening another review closes the current review tab and loads the
-selected one in a new tab; local drafts stay on disk.
+```
+  !1406 🔄 Draft: refactor(campaign): simplify persistenc…
+  !1407 🔄 Draft: feat(campaign): configure retention gro…
+▶ !1408 🔄 Draft: feat(s3): tag campaign uploads DATA-158…
+  !1409 🔄 Draft: feat(s3): backfill migration object tag…
+  !1410 🔄 Draft: feat(s3): create campaign and shared GE…
+```
+
+Each line shows the approvals, the change requests and the pipeline state:
+
+| Icon | Meaning |
+| --- | --- |
+| `👌` | One approval, repeated per approval |
+| `👎` | One change request, repeated per request |
+| `✅` | Pipeline passed |
+| `🔄` | Pipeline running or pending |
+| `❌` | Pipeline failed |
+
+The title is green when the approvals are satisfied and the pipeline passed,
+blue when an approval is missing or the pipeline is still running, and red when
+a change is requested or the pipeline failed. Override the icons in `setup`:
+
+```lua
+require("review").setup({
+  stack_icons = {
+    approved = "👌",
+    changes_requested = "👎",
+    pipeline_success = "✅",
+    pipeline_running = "🔄",
+    pipeline_failed = "❌",
+  },
+})
+```
+
+Set an icon to `""` to hide it. `Enter` on a stack line opens that review, like
+`:ReviewStackNext` and `:ReviewStackPrev`. `:ReviewStack` lists the chain with
+full titles and drafts. Opening another review closes the current review tab and
+loads the selected one in a new tab; local drafts stay on disk.
+
+Statuses come from one aliased GraphQL query per refresh on GitLab and GitHub.
+Codeberg reads each pull request in turn. GitLab exposes change requests as a
+merge status, so it shows a single `👎` however many reviewers requested
+changes. A failed status read shows `Stack status: unavailable` and leaves the
+names readable.
 
 The chain stops at an ambiguous branch: when several open reviews target the
 same source branch, they are parallel work rather than a stack, and only the
 unambiguous parent is shown. A review without branch links has no stack, and
-the commands report it instead of navigating. Stack detection reads the open
-review list once per refresh; a failure only hides the stack line and never
-blocks the review.
+the commands report it instead of navigating.
 
 ### Directory tree
 
@@ -1137,6 +1174,10 @@ require("review").setup({
   pipeline_refresh_interval = 5000, -- focused running pipelines; 0 disables polling
   job_logs = {},          -- standard trace; optional artifacts, adapters, parser and campaign split
   keymaps = {},           -- all shortcuts disabled; see Optional buffer mappings
+  stack_icons = {         -- one icon per approval, change request and pipeline state
+    approved = "👌", changes_requested = "👎",
+    pipeline_success = "✅", pipeline_running = "🔄", pipeline_failed = "❌",
+  },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected
   cache_dir = vim.fn.stdpath("cache") .. "/review",
@@ -1156,6 +1197,9 @@ require("review").setup({
 - Local viewed/unviewed progress on all providers, scoped to each Git comparison.
 - Review stacks on all providers, detected from the target/source branch links of
   open reviews. Reviews that do not chain through those branches are not stacked.
+  Stack statuses use one GraphQL query on GitLab and GitHub, and one read per
+  review on Codeberg. GitLab reports change requests as a merge status, so its
+  stack shows a single change-request icon.
 - Discussion reading and new comments on all providers; replies on GitLab and
   GitHub. Conversation resolution on GitLab. Codeberg reply drafts and GitHub/
   Codeberg conversation resolution are not implemented.

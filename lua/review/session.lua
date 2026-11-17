@@ -179,6 +179,7 @@ function Session:refresh()
   self.load_state, self.files_loading = loading, true
   self.error = nil
   self.stack, self.stack_error = nil, nil
+  self.stack_status_error = nil
   self.stack_loading = self.provider.stack ~= nil
   ui.panel(self)
   if not self.current then
@@ -285,6 +286,15 @@ function Session:refresh()
       if not active() then return end
       self.stack, self.stack_error = ok and result or nil, not ok and tostring(result) or nil
       self.stack_loading = false
+      ui.panel(self)
+      if not self.stack or not self.provider.stack_status then return end
+      local status_ok, statuses = pcall(self.provider.stack_status, self.target, self.stack.entries)
+      if not active() then return end
+      if status_ok then
+        for _, entry in ipairs(self.stack.entries) do entry.status = statuses[entry.iid] end
+      else
+        self.stack_status_error = tostring(statuses)
+      end
       ui.panel(self)
     end, function(err)
       if not active() then return end

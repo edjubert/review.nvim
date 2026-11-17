@@ -36,6 +36,11 @@ return function(ctx)
         { iid = 12, title = "Progressive review", url = "https://gitlab.example/group/nested/repo/-/merge_requests/12" },
         { iid = 13, title = "Top", url = "https://gitlab.example/group/nested/repo/-/merge_requests/13" },
       } },
+      stack_status = {
+        [11] = { pipeline = "success", approvals = 1, changes_requested = 0, approved = true },
+        [12] = { pipeline = "running", approvals = 0, changes_requested = 0, approved = false },
+        [13] = { pipeline = "failed", approvals = 0, changes_requested = 1, approved = false },
+      },
     }
     local function read(name)
       calls[name] = (calls[name] or 0) + 1
@@ -61,6 +66,7 @@ return function(ctx)
       review_status = function() return read("review") end,
       current = function() return read("current") end,
       stack = function() return read("stack") end,
+      stack_status = function() return read("stack_status") end,
       approve = function() calls.writes = (calls.writes or 0) + 1 end,
       post = function() error("Unexpected write") end,
     }
@@ -161,18 +167,23 @@ return function(ctx)
   end)
 
   test("the stack loads after the metadata without delaying the review", function()
-    fixture({ stack = true }, function(s, f)
+    fixture({ stack = true, stack_status = true }, function(s, f)
       s:load()
       assert(s.current)
       assert(f.pending.stack)
       eq(s.stack, nil)
-      assert(not text(s.panel_buf):find("Stack ", 1, true))
+      assert(not text(s.panel_buf):find("!11", 1, true))
       s:move_stack(1)
       eq(f.notifications, { "The review stack is still loading." })
       f.release("stack")
       wait(function() return s.stack ~= nil end)
       eq(s.stack.index, 2)
-      assert(text(s.panel_buf):find("Stack 2/3 · !11 !12 !13", 1, true))
+      assert(text(s.panel_buf):find("▶ !12", 1, true))
+      assert(f.pending.stack_status)
+      f.release("stack_status")
+      wait(function() return s.stack.entries[1].status ~= nil end)
+      assert(text(s.panel_buf):find("!11 👌 ✅", 1, true))
+      assert(text(s.panel_buf):find("!13 👎 ❌", 1, true))
       eq(s.error, nil)
     end)
   end)

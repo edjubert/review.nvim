@@ -21,6 +21,13 @@ local defaults = {
   },
   clone_protocol = "ssh",
   repo = nil,
+  stack_icons = {
+    approved = "👌",
+    changes_requested = "👎",
+    pipeline_success = "✅",
+    pipeline_running = "🔄",
+    pipeline_failed = "❌",
+  },
   cache_dir = vim.fn.stdpath("cache") .. "/review",
   state_dir = vim.fn.stdpath("state") .. "/review",
 }
@@ -34,6 +41,11 @@ function M.setup(opts)
   assert(type(interval) == "number" and interval % 1 == 0 and (interval == 0 or interval >= 1000),
     "pipeline_refresh_interval must be 0 or an integer of at least 1000 milliseconds")
   require("review.job_logs").validate(M.config.job_logs)
+  assert(type(M.config.stack_icons) == "table", "stack_icons must be a table")
+  for name, icon in pairs(M.config.stack_icons) do
+    assert(defaults.stack_icons[name] ~= nil, "Unknown stack_icons." .. name)
+    assert(type(icon) == "string", "stack_icons." .. name .. " must be a string")
+  end
   assert(type(M.config.keymaps) == "table", "keymaps must be a table")
   for name, key in pairs(M.config.keymaps) do
     assert(defaults.keymaps[name] ~= nil, "Unknown keymaps." .. name)
