@@ -835,6 +835,15 @@ function M.panel(session)
       status_line("  @" .. reviewer.username .. " · " .. status.label(reviewer.state)
         .. (reviewer.stale and " (stale)" or ""), reviewer.stale and "unknown" or reviewer.state)
     end
+    local behind = review_status.behind
+    if behind then
+      if behind.error then
+        status_line("Behind: unavailable", "unknown")
+      elseif type(behind.count) == "number" then
+        status_line(behind.count == 0 and "Behind: none"
+          or ("Behind: " .. behind.count .. " commit(s)"), behind.count == 0 and "success" or "pending")
+      end
+    end
     if session.provider.can_resolve then
       if loading and loading.pending.discussions then
         status_line("Open conversations: loading…", "loading")

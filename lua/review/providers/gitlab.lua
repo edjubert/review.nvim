@@ -420,10 +420,24 @@ function M.review_status(target, mr)
   end)
 end
 
+-- Compare the merge request head against its target branch to count the
+-- commits the target gained since the branches diverged.
+function M.behind_status(target, mr)
+  return status.read(function()
+    local result = M.request(target, M.project_path(target) .. "/repository/compare?from="
+      .. url.encode(mr.diff_refs.head_sha) .. "&to=" .. url.encode(mr.target_branch))
+    if type(result) ~= "table" or type(result.commits) ~= "table" or result.compare_timeout then
+      error("GitLab did not return a complete comparison.", 0)
+    end
+    return { count = #result.commits }
+  end)
+end
+
 function M.status(target, mr)
   return async.all({
     pipeline = function() return M.pipeline_status(target, mr) end,
     review = function() return M.review_status(target, mr) end,
+    behind = function() return M.behind_status(target, mr) end,
   })
 end
 

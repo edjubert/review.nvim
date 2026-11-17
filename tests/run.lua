@@ -1723,6 +1723,48 @@ test("the panel displays pipeline and review status without changing tree select
   s:close()
 end)
 
+test("the panel shows how far the review is behind its target", function()
+  local s = reply_fixture()
+  s.data.status = {
+    pipeline = { state = "success" },
+    review = { state = "approved", approvals = 1 },
+    behind = { count = 3 },
+  }
+  ui.panel(s)
+  local text = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), "\n")
+  assert(text:find("Behind: 3 commit(s)", 1, true), text)
+  s.data.status.behind = { count = 0 }
+  ui.panel(s)
+  text = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), "\n")
+  assert(text:find("Behind: none", 1, true), text)
+  s.data.status.behind = { error = "GitLab did not return a complete comparison." }
+  ui.panel(s)
+  text = table.concat(vim.api.nvim_buf_get_lines(s.panel_buf, 0, -1, false), "\n")
+  assert(text:find("Behind: unavailable", 1, true), text)
+  s:close()
+end)
+
+test("providers report how far the review is behind its target", function()
+  local github, codeberg = require("review.providers.github"), require("review.providers.codeberg")
+  local gh_target = assert(url.parse("https://github.example/owner/repo/pull/7"))
+  local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/8"))
+  mocked({ { provider, "request", function(t, endpoint)
+    eq(t, target)
+    eq(endpoint, provider.project_path(target) .. "/repository/compare?from=head&to=main")
+    return { commits = { {}, {} } }
+  end } }, function()
+    eq(provider.behind_status(target, { diff_refs = refs, target_branch = "main" }).count, 2)
+  end)
+  eq(github.behind_status(gh_target, { behind_by = 4 }).count, 4)
+  mocked({ { codeberg, "request", function(t, endpoint)
+    eq(t, cb_target)
+    eq(endpoint, codeberg.repo_path(cb_target) .. "/compare/feature...main")
+    return { commits = { {} } }
+  end } }, function()
+    eq(codeberg.behind_status(cb_target, { head = { ref = "feature" }, base = { ref = "main" } }).count, 1)
+  end)
+end)
+
 test("GitLab GraphQL change requests use the explicit host and literal variables through stdin", function()
   local async, captured = require("review.async"), {}
   mocked({

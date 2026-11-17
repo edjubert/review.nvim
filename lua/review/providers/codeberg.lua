@@ -345,10 +345,24 @@ function M.review_status(target)
   end)
 end
 
+-- Compare the pull request head against its target branch to count the
+-- commits the target gained since the branches diverged.
+function M.behind_status(target, pr)
+  return status.read(function()
+    local result = M.request(target, M.repo_path(target) .. "/compare/"
+      .. url.encode(pr.head.ref) .. "..." .. url.encode(pr.base.ref))
+    if type(result) ~= "table" or type(result.commits) ~= "table" then
+      error("Codeberg did not return a comparison.", 0)
+    end
+    return { count = #result.commits }
+  end)
+end
+
 function M.status(target, pr)
   return async.all({
     pipeline = function() return M.pipeline_status(target, pr) end,
     review = function() return M.review_status(target, pr) end,
+    behind = function() return M.behind_status(target, pr) end,
   })
 end
 

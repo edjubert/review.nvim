@@ -565,6 +565,11 @@ requests and each reviewer's decision. GitLab includes its required approval
 count; GitHub and Codeberg show received decisions, which do not guarantee that
 all branch protection requirements are satisfied.
 
+`Behind: N commit(s)` counts the commits the target branch gained since the
+review diverged, and `Behind: none` means the review is up to date. GitHub reads
+it from the comparison it already fetches; GitLab and Codeberg compare the head
+against the target branch. A failed comparison shows `Behind: unavailable`.
+
 GitLab also shows `Open conversations: N`, counting each unresolved, resolvable
 thread once, including outdated threads. The count updates as discussions arrive
 and after each confirmed resolution. Pending or failed discussion reads show

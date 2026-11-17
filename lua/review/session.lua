@@ -275,7 +275,7 @@ function Session:refresh()
         if dependency.done and not dependency.ok then return end
       end
       loading.pending[name], loading.errors[name] = nil, err
-      if name == "pipeline" or name == "review" then
+      if name == "pipeline" or name == "review" or name == "behind" then
         loading.data.status[name] = { state = "unknown", error = err }
       elseif self.data == loading.data then
         self:update_discussion_views(true)
@@ -293,12 +293,14 @@ function Session:refresh()
     if self.data == data then self:update_discussion_views(not self.ready or self.refreshing) end
     self:load_reactions(data)
   end)
-  for _, name in ipairs({ "pipeline", "review" }) do
-    section(name, { references }, function()
-      local mr = async.await(references)
-      if not active() then return {} end
-      return self.provider[name .. "_status"](self.target, mr)
-    end, function(data, result) data.status[name] = result end)
+  for _, name in ipairs({ "pipeline", "review", "behind" }) do
+    if self.provider[name .. "_status"] then
+      section(name, { references }, function()
+        local mr = async.await(references)
+        if not active() then return {} end
+        return self.provider[name .. "_status"](self.target, mr)
+      end, function(data, result) data.status[name] = result end)
+    end
   end
   if self.provider.stack then
     -- A stack is optional context: never delay or fail the review itself.
@@ -354,7 +356,7 @@ function Session:refresh()
     self:update_discussion_views()
     if not initial then notify("Review refreshed.") end
   end, function(err)
-    for _, name in ipairs({ "pipeline", "review" }) do
+    for _, name in ipairs({ "pipeline", "review", "behind" }) do
       if loading.pending[name] and loading.data then
         loading.data.status[name] = { state = "unknown", error = err }
       end
