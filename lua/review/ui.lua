@@ -153,6 +153,9 @@ function M.bind(session, buf)
     toggle_comments = { function() session:toggle_comments() end, "Show or hide inline discussions" },
     toggle_viewed = { function() session:mark_viewed() end, "Toggle this file's local viewed state" },
     files_picker = { function() session:pick_files() end, "Search review files in Telescope" },
+    stack = { function() session:show_stack() end, "Choose a review in the stack" },
+    stack_next = { function() session:move_stack(1) end, "Open the next review in the stack" },
+    stack_prev = { function() session:move_stack(-1) end, "Open the previous review in the stack" },
   }
   for name, mapping in pairs(maps) do
     bind(session, buf, name, mapping[1], mapping[2])
@@ -259,6 +262,9 @@ function M.help(session)
     { ":ReviewPrevFile", "prev_file", "Open the previous matching changed file" },
     { ":ReviewNextChange", "next_hunk", "Jump forward through change blocks; accepts a count" },
     { ":ReviewPrevChange", "prev_hunk", "Jump backward through change blocks; accepts a count" },
+    { ":ReviewStack", "stack", "Choose another review in the stack" },
+    { ":ReviewStackNext", "stack_next", "Open the next review in the stack" },
+    { ":ReviewStackPrev", "stack_prev", "Open the previous review in the stack" },
     { ":ReviewFiles", "search_files", "Edit the sidebar file filter, or apply a query", "Panel" },
     { ":ReviewFilesClear", false, "Clear the filter and restore directory folds", "Panel" },
     { "Return to file tree", "filter_exit", "Keep the query and return to the tree; native Enter and Ctrl-C also work", "File filter" },
@@ -561,6 +567,39 @@ function M.panel_action(session, action)
   end
 end
 
+-- Keep the current review visible when a long stack does not fit the panel.
+local function stack_line(session, stack)
+  local width = session.panel_win and vim.api.nvim_win_is_valid(session.panel_win)
+    and vim.api.nvim_win_get_width(session.panel_win) or (session.config.panel_width or 44)
+  width = math.max(12, width - 1)
+  local head = ("Stack %d/%d · "):format(stack.index, #stack.entries)
+  local labels = {}
+  for _, entry in ipairs(stack.entries) do
+    labels[#labels + 1] = session.provider.prefix .. entry.iid
+  end
+  local first, last = 1, #labels
+  local function render()
+    local parts = {}
+    if first > 1 then parts[#parts + 1] = "…" end
+    for index = first, last do parts[#parts + 1] = labels[index] end
+    if last < #labels then parts[#parts + 1] = "…" end
+    local start = #head
+    for index = 1, (first > 1 and 1 or 0) do start = start + #parts[index] + 1 end
+    for index = first, stack.index - 1 do start = start + #labels[index] + 1 end
+    return head .. table.concat(parts, " "), start, start + #labels[stack.index]
+  end
+  local text, start, finish = render()
+  while #text > width and (first < stack.index or last > stack.index) do
+    if last > stack.index and (first == 1 or last - stack.index >= stack.index - first) then
+      last = last - 1
+    else
+      first = first + 1
+    end
+    text, start, finish = render()
+  end
+  return text, start, finish
+end
+
 function M.panel(session)
   if not M.valid(session) or not vim.api.nvim_buf_is_valid(session.panel_buf) then return end
   local anchor
@@ -569,7 +608,6 @@ function M.panel(session)
   end
   local lines = {
     session.provider.prefix .. session.target.iid .. " " .. (session.data and session.data.mr.title or "Loading…"),
-    "",
   }
   if session.refreshing and session.data then
     lines[1] = lines[1] .. (session.load_state and session.load_state.initial and " · loading…" or " · refreshing…")
@@ -579,6 +617,16 @@ function M.panel(session)
   local function highlight(line, start, finish, group)
     decorations[#decorations + 1] = { line = line, start = start, finish = finish, group = group }
   end
+  if session.stack then
+    local text, start, finish = stack_line(session, session.stack)
+    lines[#lines + 1] = text
+    highlight(#lines, 0, #text, "ReviewHelp")
+    highlight(#lines, start, finish, "ReviewPanelTitle")
+  elseif session.stack_error then
+    lines[#lines + 1] = "Stack: unavailable"
+    highlight(#lines, 0, #lines[#lines], "ReviewStatusWarn")
+  end
+  lines[#lines + 1] = ""
   local function entry(text, item, group, selected)
     lines[#lines + 1] = text
     session.panel_entries[#lines] = item

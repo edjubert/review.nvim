@@ -31,6 +31,11 @@ return function(ctx)
       review = { state = "approved", approvals = 1 },
       current = { diff_refs = vim.deepcopy(refs) },
       repository = "/explicit/review/repo",
+      stack = { index = 2, entries = {
+        { iid = 11, title = "Base", url = "https://gitlab.example/group/nested/repo/-/merge_requests/11" },
+        { iid = 12, title = "Progressive review", url = "https://gitlab.example/group/nested/repo/-/merge_requests/12" },
+        { iid = 13, title = "Top", url = "https://gitlab.example/group/nested/repo/-/merge_requests/13" },
+      } },
     }
     local function read(name)
       calls[name] = (calls[name] or 0) + 1
@@ -55,6 +60,7 @@ return function(ctx)
       pipeline_status = function() return read("pipeline") end,
       review_status = function() return read("review") end,
       current = function() return read("current") end,
+      stack = function() return read("stack") end,
       approve = function() calls.writes = (calls.writes or 0) + 1 end,
       post = function() error("Unexpected write") end,
     }
@@ -150,6 +156,23 @@ return function(ctx)
       wait(function() return not next(s.load_state.pending) end)
       eq(s.data.status.pipeline.state, "success")
       eq(s.data.status.review.state, "approved")
+      eq(s.error, nil)
+    end)
+  end)
+
+  test("the stack loads after the metadata without delaying the review", function()
+    fixture({ stack = true }, function(s, f)
+      s:load()
+      assert(s.current)
+      assert(f.pending.stack)
+      eq(s.stack, nil)
+      assert(not text(s.panel_buf):find("Stack ", 1, true))
+      s:move_stack(1)
+      eq(f.notifications, { "The review stack is still loading." })
+      f.release("stack")
+      wait(function() return s.stack ~= nil end)
+      eq(s.stack.index, 2)
+      assert(text(s.panel_buf):find("Stack 2/3 · !11 !12 !13", 1, true))
       eq(s.error, nil)
     end)
   end)

@@ -11,6 +11,7 @@ local defaults = {
     search_files = false, files_picker = false, filter_exit = false, toggle_viewed = false,
     next_commit = false, prev_commit = false, next_file = false, prev_file = false,
     next_hunk = false, prev_hunk = false, complete = false, drafts = false,
+    stack = false, stack_next = false, stack_prev = false,
     thread = false, threads = false, close = false,
     panel_open = false, panel_left = false, panel_right = false,
     panel_toggle = false, panel_expand = false, panel_collapse = false,
@@ -249,6 +250,12 @@ function M._commands()
   end
   session_command("ReviewComplete", function(session) session:select_commit(0) end,
     { desc = "Show the complete MR/PR comparison" })
+  session_command("ReviewStack", function(session) session:show_stack() end,
+    { desc = "Choose another review in the stack" })
+  session_command("ReviewStackNext", function(session) session:move_stack(1) end,
+    { desc = "Open the next review in the stack" })
+  session_command("ReviewStackPrev", function(session) session:move_stack(-1) end,
+    { desc = "Open the previous review in the stack" })
   local panel_actions = { "open", "left", "right", "toggle", "expand", "collapse", "collapse_all", "expand_all" }
   session_command("ReviewPanel", function(session, args)
     if not vim.tbl_contains(panel_actions, args.args) then error("Unknown ReviewPanel action: " .. args.args, 0) end

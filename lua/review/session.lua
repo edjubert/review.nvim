@@ -178,6 +178,8 @@ function Session:refresh()
   }
   self.load_state, self.files_loading = loading, true
   self.error = nil
+  self.stack, self.stack_error = nil, nil
+  self.stack_loading = self.provider.stack ~= nil
   ui.panel(self)
   if not self.current then
     ui.empty(self, initial and "Loading review…" or "Refreshing review…")
@@ -273,6 +275,22 @@ function Session:refresh()
       if not active() then return {} end
       return self.provider[name .. "_status"](self.target, mr)
     end, function(data, result) data.status[name] = result end)
+  end
+  if self.provider.stack then
+    -- A stack is optional context: never delay or fail the review itself.
+    async.run(function()
+      local mr = async.await(info)
+      if not active() then return end
+      local ok, result = pcall(self.provider.stack, self.target, mr)
+      if not active() then return end
+      self.stack, self.stack_error = ok and result or nil, not ok and tostring(result) or nil
+      self.stack_loading = false
+      ui.panel(self)
+    end, function(err)
+      if not active() then return end
+      self.stack, self.stack_error, self.stack_loading = nil, err, false
+      ui.panel(self)
+    end)
   end
   self:task(function()
     -- Metadata may still be in flight when this coroutine starts.
@@ -505,6 +523,56 @@ function Session:move_hunk(direction, count)
   vim.api.nvim_set_current_win(self.viewer_win)
   vim.api.nvim_win_set_cursor(self.viewer_win, { destination, 0 })
   vim.cmd.normal({ args = { "zvzz" }, bang = true })
+end
+
+function Session:stack_unavailable()
+  if self.stack_loading then
+    notify("The review stack is still loading.")
+    return
+  end
+  notify(self.stack_error and ("The review stack is unavailable: " .. self.stack_error)
+    or "This review is not part of a stack.", vim.log.levels.WARN)
+end
+
+function Session:open_stack_entry(entry)
+  if not entry then return end
+  if self.submitting or self.deciding or self.resolving then
+    notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
+    return
+  end
+  if type(entry.url) ~= "string" or entry.url == "" then
+    notify("This review has no URL to open.", vim.log.levels.ERROR)
+    return
+  end
+  -- Opening another review closes this tab and loads the selected one.
+  require("review").open(entry.url)
+end
+
+function Session:move_stack(delta)
+  if self.closed or not ui.valid(self) then return end
+  if not self.stack then self:stack_unavailable(); return end
+  local entry = self.stack.entries[self.stack.index + delta]
+  if not entry then
+    notify(delta > 0 and "This is the last review in the stack." or "This is the first review in the stack.")
+    return
+  end
+  self:open_stack_entry(entry)
+end
+
+function Session:show_stack()
+  if self.closed or not ui.valid(self) then return end
+  if not self.stack then self:stack_unavailable(); return end
+  local prefix = self.provider.prefix
+  vim.ui.select(self.stack.entries, {
+    prompt = ("Review stack (%d/%d)"):format(self.stack.index, #self.stack.entries),
+    format_item = function(entry)
+      return ("%s%s%d %s%s"):format(entry.iid == self.target.iid and "▶ " or "  ",
+        prefix, entry.iid, entry.title or "", entry.draft and " [draft]" or "")
+    end,
+  }, function(entry)
+    if not entry or entry.iid == self.target.iid then return end
+    self:open_stack_entry(entry)
+  end)
 end
 
 -- A commit snapshot is mapped to the current review diff, with unchanged lines

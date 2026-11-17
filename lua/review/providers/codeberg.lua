@@ -149,6 +149,27 @@ local function line(value)
   return type(value) == "number" and value > 0 and value % 1 == 0 and value or nil
 end
 
+local function stack_entry(pr)
+  return {
+    iid = pr.number, title = pr.title, state = pr.state, draft = pr.draft == true,
+    source_branch = type(pr.head) == "table" and pr.head.ref or nil,
+    target_branch = type(pr.base) == "table" and pr.base.ref or nil,
+    url = pr.html_url,
+  }
+end
+
+function M.open_reviews(target)
+  local reviews = {}
+  for _, pr in ipairs(M.pages(target, M.repo_path(target) .. "/pulls?state=open")) do
+    reviews[#reviews + 1] = stack_entry(pr)
+  end
+  return reviews
+end
+
+function M.stack(target, pr)
+  return require("review.stack").build(stack_entry(pr), M.open_reviews(target))
+end
+
 function M.note_reactions(target, note)
   return reactions.aggregate(M.pages(target, M.repo_path(target) .. "/issues/comments/" .. note.id .. "/reactions"))
 end

@@ -19,6 +19,7 @@ pipeline, reviewer decisions and two of five files viewed. `:ReviewViewed` and
 - Read the MR/PR title and Markdown description.
 - Edit and publish the MR/PR description from a Markdown editor.
 - Switch between individual commits and the complete MR/PR.
+- Move between the reviews of a stack; the panel shows the position and the chain.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
 - Filter changed files directly in the sidebar, or search them in Telescope.
@@ -181,6 +182,8 @@ merge base.
 | `:ReviewNextFile` / `:ReviewPrevFile` | Next / previous changed file |
 | `:ReviewNextChange` / `:ReviewPrevChange` | Next / previous change block; counts supported |
 | `:ReviewComplete` | Show the complete MR/PR comparison |
+| `:ReviewStack` | Choose another review in the stack |
+| `:ReviewStackNext` / `:ReviewStackPrev` | Open the next / previous review in the stack |
 | `:ReviewPanel <action>` | Open or fold the selected panel entry |
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewHelp` | Search commands, configured mappings and their context in Telescope |
@@ -232,6 +235,9 @@ require("review").setup({
     prev_file = "[f",
     next_hunk = "]h",
     prev_hunk = "[h",
+    stack = "<leader>rS",
+    stack_next = "]s",
+    stack_prev = "[s",
     complete = "<leader>ra",
     drafts = "<leader>rd",
     threads = "<leader>rT",
@@ -291,6 +297,8 @@ With that example enabled:
 | `]c` / `[c` | Next / previous commit |
 | `]f` / `[f` | Next / previous file |
 | `]h` / `[h` | Next / previous change block in the current file |
+| `]s` / `[s` | Next / previous review in the stack |
+| `<leader>rS` | Choose a review in the stack |
 | `<leader>ra` | Complete MR/PR |
 | `<leader>rc` in the diff, normal or visual mode | Comment on the line / range |
 | `<leader>rR` in the diff | Draft a reply to a discussion on the current line |
@@ -333,6 +341,26 @@ added lines form one block; navigation stays within the current file.
 Use `:ReviewNextFile` for the next file.
 Opening a file automatically places the cursor on its first change block,
 opens any folds covering that line, and centers the diff view there.
+
+### Review stacks
+
+A stack is a chain of open reviews where each one targets the source branch of
+the review below it. The panel shows the position and the whole chain under the
+title, for example `Stack 3/5 · !1406 !1407 !1408 !1409 !1410`, with the current
+review highlighted. Long stacks keep the current review visible and elide the
+farthest entries.
+
+`:ReviewStackNext` and `:ReviewStackPrev` open the next or previous review.
+`:ReviewStack` lists the chain with titles and drafts, and opens the selected
+review. Opening another review closes the current review tab and loads the
+selected one in a new tab; local drafts stay on disk.
+
+The chain stops at an ambiguous branch: when several open reviews target the
+same source branch, they are parallel work rather than a stack, and only the
+unambiguous parent is shown. A review without branch links has no stack, and
+the commands report it instead of navigating. Stack detection reads the open
+review list once per refresh; a failure only hides the stack line and never
+blocks the review.
 
 ### Directory tree
 
@@ -1126,6 +1154,8 @@ require("review").setup({
 - Live file filtering in the sidebar on all providers, without a picker dependency.
 - Command help, GitLab pipeline/job details and a separate file picker via optional Telescope.
 - Local viewed/unviewed progress on all providers, scoped to each Git comparison.
+- Review stacks on all providers, detected from the target/source branch links of
+  open reviews. Reviews that do not chain through those branches are not stacked.
 - Discussion reading and new comments on all providers; replies on GitLab and
   GitHub. Conversation resolution on GitLab. Codeberg reply drafts and GitHub/
   Codeberg conversation resolution are not implemented.

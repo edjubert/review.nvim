@@ -454,6 +454,8 @@ test("file filter remains accessible while scrolling and resizing", function()
   end
   ui.create(s)
   eq(help_entry(s, ":ReviewComplete").key, "gA")
+  eq(help_entry(s, ":ReviewStack").key, false)
+  eq(help_entry(s, ":ReviewStackNext").key, false)
   eq(help_entry(s, ":[range]ReviewComment").key, "<leader>rc")
   eq(help_entry(s, ":ReviewNextChange").key, "]h")
   local filter = vim.api.nvim_win_get_config(s.filter_win)
@@ -2101,6 +2103,10 @@ dofile("tests/batch_resolution.lua")({
   test = test, eq = eq, raises = raises, mocked = mocked,
   provider = provider, request = actual_gitlab_request, refs = refs, target = target, drafts = drafts,
   fixture = comment_url_fixture,
+})
+
+dofile("tests/stack.lua")({
+  test = test, eq = eq, mocked = mocked, fixture = reply_fixture, ui = ui,
 })
 
 dofile("tests/job_logs.lua")({

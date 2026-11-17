@@ -93,6 +93,28 @@ end
 
 M.references = with_refs
 
+local function stack_entry(pr)
+  return {
+    iid = pr.number, title = pr.title, state = pr.state, draft = pr.draft == true,
+    source_branch = type(pr.head) == "table" and pr.head.ref or nil,
+    target_branch = type(pr.base) == "table" and pr.base.ref or nil,
+    url = pr.html_url,
+  }
+end
+
+function M.open_reviews(target)
+  local reviews = {}
+  -- The pulls endpoint lists open pull requests unless a state is requested.
+  for _, pr in ipairs(M.pages(target, M.repo_path(target) .. "/pulls")) do
+    reviews[#reviews + 1] = stack_entry(pr)
+  end
+  return reviews
+end
+
+function M.stack(target, pr)
+  return require("review.stack").build(stack_entry(pr), M.open_reviews(target))
+end
+
 function M.pipeline_status(target, pr)
   return status.read(function()
     local endpoint = M.repo_path(target) .. "/commits/" .. url.encode(pr.diff_refs.head_sha)

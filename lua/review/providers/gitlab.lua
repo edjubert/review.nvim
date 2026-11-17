@@ -59,10 +59,11 @@ function M.mr_path(target)
   return M.project_path(target) .. "/merge_requests/" .. target.iid
 end
 
-function M.pages(target, endpoint)
+function M.pages(target, endpoint, query)
   local all = {}
   for page = 1, 1000 do
-    local data = M.request(target, endpoint .. "?per_page=100&page=" .. page)
+    local data = M.request(target, endpoint .. "?" .. (query and (query .. "&") or "")
+      .. "per_page=100&page=" .. page)
     if type(data) ~= "table" or not vim.islist(data) then error("Expected a GitLab result list.", 0) end
     vim.list_extend(all, data)
     if #data < 100 then return all end
@@ -103,6 +104,25 @@ end
 
 function M.current(target)
   return M.request(target, M.mr_path(target))
+end
+
+local function stack_entry(mr)
+  return {
+    iid = mr.iid, title = mr.title, state = mr.state, draft = mr.draft == true,
+    source_branch = mr.source_branch, target_branch = mr.target_branch, url = mr.web_url,
+  }
+end
+
+function M.open_reviews(target)
+  local reviews = {}
+  for _, mr in ipairs(M.pages(target, M.project_path(target) .. "/merge_requests", "state=opened")) do
+    reviews[#reviews + 1] = stack_entry(mr)
+  end
+  return reviews
+end
+
+function M.stack(target, mr)
+  return require("review.stack").build(stack_entry(mr), M.open_reviews(target))
 end
 
 local function comment_metadata(target, discussion)

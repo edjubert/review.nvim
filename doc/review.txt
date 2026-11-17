@@ -109,6 +109,23 @@ COMMANDS
 :ReviewComplete                                            *:ReviewComplete*
     Open the complete MR/PR comparison.
 
+:ReviewStack                                                  *:ReviewStack*
+    List the reviews of the current stack with their titles and draft state,
+    then open the selected one. The current review is marked and selecting it
+    does nothing. A review without a stack reports it instead of listing.
+
+:ReviewStackNext / :ReviewStackPrev       *:ReviewStackNext* *:ReviewStackPrev*
+    Open the next/previous review in the stack. The panel shows the position
+    and the chain under the title, for example
+    "Stack 3/5 · !1406 !1407 !1408 !1409 !1410". Opening another review closes
+    the current review tab; local drafts stay on disk.
+    A stack is a chain of open reviews where each one targets the source branch
+    of the review below it. The chain stops at an ambiguous branch, where
+    several open reviews target the same source branch. Detection reads the
+    open review list once per refresh; a failure only hides the stack line.
+    Enable keymaps.stack, keymaps.stack_next and keymaps.stack_prev for
+    shortcuts; the optional example uses <leader>rS, ]s and [s.
+
 :ReviewPanel {action}                                         *:ReviewPanel*
     Act on the panel entry under the panel's cursor, from either review window.
     Actions: open, left, right, toggle, expand, collapse, collapse_all, expand_all.
@@ -255,7 +272,8 @@ available. See |review-setup| for the optional Lua example.
 
 Commands provide navigation without mappings: |:ReviewPanel| controls the tree,
 |:ReviewComplete| opens the full comparison, |:ReviewNextCommit| and
-|:ReviewNextFile| navigate commits/files, and |:ReviewNextChange| jumps changes.
+|:ReviewNextFile| navigate commits/files, |:ReviewNextChange| jumps changes, and
+|:ReviewStackNext| moves between the reviews of a stack.
 
 The search field uses a prompt buffer: its native Enter accepts the query and
 returns to the tree; Ctrl-C returns while keeping the filter. Enable
@@ -390,6 +408,7 @@ The README includes the same example.
       next_commit = "]c", prev_commit = "[c",
       next_file = "]f", prev_file = "[f",
       next_hunk = "]h", prev_hunk = "[h",
+      stack = "<leader>rS", stack_next = "]s", stack_prev = "[s",
       complete = "<leader>ra", drafts = "<leader>rd",
       threads = "<leader>rT", submit = "<leader>rs",
       refresh = "<leader>rr", info = "<leader>ri", help = "<leader>r?",
