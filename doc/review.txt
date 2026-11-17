@@ -53,6 +53,12 @@ COMMANDS
     window. :q closes it. Empty descriptions display "No description provided."
     Use :ReviewRefresh to retrieve updated metadata.
 
+:ReviewEditDescription                               *:ReviewEditDescription*
+    Open the loaded MR/PR description in a Markdown editor. :w asks for
+    confirmation, then publishes the text and updates the loaded metadata.
+    :q! cancels. An empty description is accepted and clears it.
+    Enable keymaps.edit_description for a shortcut.
+
 :ReviewHelp                                                     *:ReviewHelp*
     Search commands, configured shortcuts, actions and contexts in Telescope.
     The preview shows the mapping and where each action applies. Disabled
@@ -274,6 +280,9 @@ closes the editor. Enable keymaps.save_draft for an additional save shortcut.
 Enable keymaps.close_document for closing/canceling review document windows.
 Publication requires :ReviewSubmit.
 
+:w in the description editor asks for confirmation before publishing the text.
+The editor stays open when the provider rejects or does not confirm the update.
+
 Deleted rows are real buffer lines. The buffer row number is not the original
 file line number: review.nvim maps selected rows to provider old/new positions.
 
@@ -384,6 +393,7 @@ The README includes the same example.
       complete = "<leader>ra", drafts = "<leader>rd",
       threads = "<leader>rT", submit = "<leader>rs",
       refresh = "<leader>rr", info = "<leader>ri", help = "<leader>r?",
+      edit_description = "<leader>re",
       toggle_comments = "<leader>rt", toggle_viewed = "<leader>rv",
       files_picker = "<leader>rF",
       close = "q",
@@ -398,7 +408,7 @@ The README includes the same example.
       filter_exit = "<Esc>", -- filter input, normal/insert mode
       -- Review document/comment windows.
       close_document = "q", select_comment = "<CR>",
-      save_draft = "<C-s>", -- comment editor, normal/insert mode
+      save_draft = "<C-s>", -- comment and description editors, normal/insert mode
       -- Extra pipeline picker shortcuts, insert/normal mode.
       pipeline_open = "<C-o>", pipeline_back = "<C-b>",
       pipeline_refresh = "<C-r>",

@@ -43,7 +43,7 @@ function M.head_ref(target)
   return ("refs/pull/%d/head"):format(target.iid)
 end
 
-function M.request(target, endpoint, body, raw)
+function M.request(target, endpoint, body, method, raw)
   -- This environment token belongs exclusively to Codeberg, not other Forgejo
   -- installations. Redirects and curlrc are disabled to preserve that boundary.
   if target.host ~= "codeberg.org" then error("The Codeberg provider only supports codeberg.org.", 0) end
@@ -53,7 +53,7 @@ function M.request(target, endpoint, body, raw)
   if endpoint ~= "settings/api" then auth = token(body ~= nil) end
   local config = {
     "url = " .. quote("https://codeberg.org/api/v1/" .. endpoint),
-    "request = " .. quote(body and "POST" or "GET"),
+    "request = " .. quote(method or (body and "POST" or "GET")),
     "header = " .. quote("Accept: " .. (raw and "text/plain" or "application/json")),
   }
   if auth then config[#config + 1] = "header = " .. quote("Authorization: token " .. auth) end
@@ -242,7 +242,7 @@ function M.diffs(target, pr)
       renamed_file = old ~= file.filename, diff = "",
     }
   end
-  patches.apply(M.request(target, endpoint .. ".diff", nil, true), diffs)
+  patches.apply(M.request(target, endpoint .. ".diff", nil, "GET", true), diffs)
   return diffs
 end
 
@@ -347,6 +347,15 @@ function M.post(target, draft)
   local result = M.request(target, M.pr_path(target) .. "/reviews", body)
   if type(result) ~= "table" or not result.id or result.comments_count ~= 1 or result.state ~= "COMMENT" then
     error("Codeberg did not confirm the expected published comment.", 0)
+  end
+  return result
+end
+
+function M.update_description(target, description)
+  -- Only the explicit :ReviewEditDescription command calls this method.
+  local result = M.request(target, M.pr_path(target), { body = description }, "PATCH")
+  if type(result) ~= "table" or result.body ~= description then
+    error("Codeberg did not confirm the description update. Check the PR before retrying.", 0)
   end
   return result
 end

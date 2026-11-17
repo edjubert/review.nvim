@@ -435,6 +435,15 @@ function M.post(target, draft)
   return response
 end
 
+function M.update_description(target, description)
+  -- Only the explicit :ReviewEditDescription command calls this method.
+  local result = M.request(target, M.pr_path(target), { body = description }, "PATCH")
+  if type(result) ~= "table" or result.body ~= description then
+    error("GitHub did not confirm the description update. Check the PR before retrying.", 0)
+  end
+  return result
+end
+
 function M.reply_target(discussion)
   local root = threads.root(discussion)
   if not root or type(root.id) ~= "number" or root.id <= 0 or root.id % 1 ~= 0

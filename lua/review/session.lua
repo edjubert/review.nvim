@@ -759,6 +759,37 @@ function Session:show_info()
     ui.key(self, "close_document") or ":q"), lines, { config = self.config })
 end
 
+function Session:edit_description()
+  if not ui.valid(self) then return end
+  if not self.data then
+    notify("The review metadata is not loaded yet.", vim.log.levels.WARN)
+    return
+  end
+  if not self.provider.update_description then
+    notify("Editing the description is not supported by " .. self.provider.name .. ".", vim.log.levels.WARN)
+    return
+  end
+  if self.deciding or self.submitting or self.resolving or self.refreshing then
+    notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
+    return
+  end
+  local review = self.data.mr
+  local description = type(review.description) == "string" and review.description or ""
+  local label = ("%s %s%d description"):format(self.provider.name, self.provider.prefix, self.target.iid)
+  ui.edit(label, description, function(text, close)
+    local choice = "Update the description"
+    vim.ui.select({ "Cancel", choice }, { prompt = "Update " .. label .. "?" }, function(selected)
+      if selected ~= choice then return end
+      self:task(function()
+        self.provider.update_description(self.target, text)
+        self.data.mr.description = text
+        close()
+        notify("Description updated.", vim.log.levels.INFO)
+      end)
+    end)
+  end, self.config)
+end
+
 function Session:toggle_comments()
   if not ui.valid(self) then return end
   self.inline_comments = not self.inline_comments

@@ -6,6 +6,7 @@ local defaults = {
   job_logs = { gitlab = { trace_path = "projects/{project_id}/jobs/{job_id}/trace", artifacts = {} }, adapters = {} },
   keymaps = {
     comment = false, submit = false, refresh = false, info = false, help = false,
+    edit_description = false,
     toggle_comments = false, reply = false, open_comment = false,
     search_files = false, files_picker = false, filter_exit = false, toggle_viewed = false,
     next_commit = false, prev_commit = false, next_file = false, prev_file = false,
@@ -142,6 +143,14 @@ function M.info()
   M.session:show_info()
 end
 
+function M.edit_description()
+  if not M.session or M.session.closed then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  M.session:edit_description()
+end
+
 function M.pipelines()
   if not M.session or M.session.closed then
     vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
@@ -248,6 +257,8 @@ function M._commands()
     complete = function() return panel_actions end })
   vim.api.nvim_create_user_command("ReviewInfo", M.info,
     { desc = "Show the MR/PR title and description" })
+  vim.api.nvim_create_user_command("ReviewEditDescription", M.edit_description,
+    { desc = "Edit and publish the MR/PR description" })
   vim.api.nvim_create_user_command("ReviewHelp", M.help,
     { desc = "Search review commands and configured mappings in Telescope" })
   vim.api.nvim_create_user_command("ReviewPipelines", M.pipelines,

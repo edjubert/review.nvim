@@ -309,6 +309,15 @@ function M.approve(target, refs)
   return M.request(target, M.mr_path(target) .. "/approve", { sha = refs.head_sha })
 end
 
+function M.update_description(target, description)
+  -- Only the explicit :ReviewEditDescription command calls this method.
+  local result = M.request(target, M.mr_path(target), { description = description }, "PUT")
+  if type(result) ~= "table" or result.description ~= description then
+    error("GitLab did not confirm the description update. Check the MR before retrying.", 0)
+  end
+  return result
+end
+
 function M.pipeline_status(_, mr)
   local pipeline = type(mr.head_pipeline) == "table" and mr.head_pipeline or nil
   return {

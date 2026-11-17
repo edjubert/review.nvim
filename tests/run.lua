@@ -1799,6 +1799,93 @@ test("review decisions pin approval and request changes to the loaded revision",
   end)
 end)
 
+test("description updates use each provider's endpoint, method and confirmation", function()
+  local github, codeberg = require("review.providers.github"), require("review.providers.codeberg")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/12"))
+  local calls = {}
+  mocked({
+    { provider, "request", function(_, endpoint, body, method)
+      calls[#calls + 1] = { endpoint = endpoint, body = body, method = method }
+      return { description = body.description }
+    end },
+    { github, "request", function(_, endpoint, body, method)
+      calls[#calls + 1] = { endpoint = endpoint, body = body, method = method }
+      return { body = body.body }
+    end },
+    { codeberg, "request", function(_, endpoint, body, method)
+      calls[#calls + 1] = { endpoint = endpoint, body = body, method = method }
+      return { body = body.body }
+    end },
+  }, function()
+    provider.update_description(target, "GitLab text")
+    github.update_description(gh_target, "GitHub text")
+    codeberg.update_description(cb_target, "Codeberg text")
+    eq(calls[1], { endpoint = provider.mr_path(target), body = { description = "GitLab text" }, method = "PUT" })
+    eq(calls[2], { endpoint = github.pr_path(gh_target), body = { body = "GitHub text" }, method = "PATCH" })
+    eq(calls[3], { endpoint = codeberg.pr_path(cb_target), body = { body = "Codeberg text" }, method = "PATCH" })
+  end)
+end)
+
+test("unconfirmed description updates report the provider", function()
+  local github, codeberg = require("review.providers.github"), require("review.providers.codeberg")
+  local gh_target = assert(url.parse("https://github.com/owner/repo/pull/12"))
+  local cb_target = assert(url.parse("https://codeberg.org/owner/repo/pulls/12"))
+  mocked({
+    { provider, "request", function() return { description = "stale" } end },
+    { github, "request", function() return { body = "stale" } end },
+    { codeberg, "request", function() return { body = "stale" } end },
+  }, function()
+    raises(function() provider.update_description(target, "new") end, "did not confirm")
+    raises(function() github.update_description(gh_target, "new") end, "did not confirm")
+    raises(function() codeberg.update_description(cb_target, "new") end, "did not confirm")
+  end)
+end)
+
+test("the description editor writes the buffer text and closes only on success", function()
+  local saved, buf, win = nil, nil, nil
+  mocked({ { vim, "notify", function() end } }, function()
+    buf, win = ui.edit("Description fixture", "First line\nSecond line", function(text, close)
+      saved = text
+      close()
+    end, config)
+    eq(vim.api.nvim_buf_get_lines(buf, 0, -1, false), { "First line", "Second line" })
+    vim.api.nvim_buf_call(buf, function() vim.cmd("write") end)
+    eq(saved, "First line\nSecond line")
+    eq(vim.api.nvim_win_is_valid(win), false)
+    local failed_buf, failed_win = ui.edit("Description fixture", "text", function() error("network down") end, config)
+    vim.api.nvim_buf_call(failed_buf, function() vim.cmd("write") end)
+    eq(vim.api.nvim_win_is_valid(failed_win), true)
+    vim.api.nvim_win_close(failed_win, true)
+  end)
+end)
+
+test("description editing requires confirmation and updates the loaded metadata", function()
+  local s, writes, choice, editor = reply_fixture(), 0, 1, nil
+  s.data.mr.description = "Old description"
+  mocked({
+    { vim, "notify", function() end },
+    { vim.ui, "select", function(items, _, selected) selected(items[choice]) end },
+    { ui, "edit", function(title, body, save)
+      editor = { title = title, body = body, save = save }
+      return 0, 0
+    end },
+    { provider, "update_description", function(_, text)
+      writes = writes + 1; eq(text, "New description")
+    end },
+  }, function()
+    s:edit_description()
+    eq(editor.body, "Old description")
+    assert(editor.title:find("description", 1, true))
+    editor.save("New description", function() end)
+    eq(writes, 0); eq(s.data.mr.description, "Old description")
+    choice = 2
+    editor.save("New description", function() end)
+    eq(writes, 1); eq(s.data.mr.description, "New description")
+  end)
+  s:close()
+end)
+
 test("standalone request changes requires confirmation and preserves local drafts", function()
   local s, reads, writes, choice = reply_fixture(), 0, 0, 1
   s:save_draft("Remain local", vim.tbl_extend("force", { old_path = "code.lua", new_path = "code.lua", new_line = 3 }, refs), "head")

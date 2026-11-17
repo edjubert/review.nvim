@@ -7,8 +7,8 @@
 - Load the MR/PR's exact commit list and diff refs from its provider.
 - Comments are local drafts. Saving or editing never publishes.
 - Only explicit `:ReviewSubmit`, `:ReviewApprove`, `:ReviewRequestChanges`,
-  `:ReviewResolve`, and confirmed `:ReviewResolveAll` may call their corresponding
-  write endpoints.
+  `:ReviewEditDescription`, `:ReviewResolve`, and confirmed `:ReviewResolveAll`
+  may call their corresponding write endpoints.
 - Never publish a real comment, resolve a thread, or send a message during development.
 - Never read tokens from configuration files; use authenticated `glab`/`gh`
   commands, or `CODEBERG_TOKEN` from the environment for Codeberg.

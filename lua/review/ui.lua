@@ -148,6 +148,7 @@ function M.bind(session, buf)
     submit = { function() session:submit() end, "Preview and submit review drafts" },
     refresh = { function() session:refresh() end, "Refresh the review" },
     info = { function() session:show_info() end, "Show the MR/PR title and description" },
+    edit_description = { function() session:edit_description() end, "Edit the MR/PR description" },
     help = { function() M.help(session) end, "Search review commands and mappings" },
     toggle_comments = { function() session:toggle_comments() end, "Show or hide inline discussions" },
     toggle_viewed = { function() session:mark_viewed() end, "Toggle this file's local viewed state" },
@@ -250,6 +251,7 @@ function M.help(session)
   for _, item in ipairs({
     { ":ReviewHelp", "help", "Search review commands and configured mappings" },
     { ":ReviewInfo", "info", "Show the MR/PR title and description" },
+    { ":ReviewEditDescription", "edit_description", "Edit and publish the MR/PR description" },
     { ":ReviewComplete", "complete", "Show the complete MR/PR comparison" },
     { ":ReviewNextCommit", "next_commit", "Select the next commit" },
     { ":ReviewPrevCommit", "prev_commit", "Select the previous commit" },
@@ -913,6 +915,29 @@ function M.compose(title, body, saved, config)
   vim.api.nvim_create_autocmd("BufWriteCmd", { buffer = buf, callback = save })
   if save_key then
     vim.keymap.set({ "n", "i" }, save_key, save, { buffer = buf, silent = true, desc = "Save local draft" })
+  end
+  return buf, win
+end
+
+function M.edit(title, body, save, config)
+  config = config or require("review").config
+  local save_key = (config.keymaps or {}).save_draft
+  local buf, win = float(title .. " · " .. (save_key and save_key .. " or " or "") .. ":w updates",
+    vim.split(body or "", "\n"), true, config)
+  local function close()
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    vim.bo[buf].modified = false
+    vim.cmd.stopinsert()
+    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+  end
+  local function write()
+    local text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+    local ok, err = pcall(save, text, close)
+    if not ok then vim.notify(tostring(err), vim.log.levels.ERROR, { title = "review" }) end
+  end
+  vim.api.nvim_create_autocmd("BufWriteCmd", { buffer = buf, callback = write })
+  if save_key then
+    vim.keymap.set({ "n", "i" }, save_key, write, { buffer = buf, silent = true, desc = "Update the description" })
   end
   return buf, win
 end

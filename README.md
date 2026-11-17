@@ -17,6 +17,7 @@ pipeline, reviewer decisions and two of five files viewed. `:ReviewViewed` and
 - Open a GitLab MR, GitHub PR or Codeberg PR URL, including commit/file subpages.
 - Browse the exact commit list, oldest first.
 - Read the MR/PR title and Markdown description.
+- Edit and publish the MR/PR description from a Markdown editor.
 - Switch between individual commits and the complete MR/PR.
 - Read additions, deletions and context in one read-only buffer with both line numbers
   and intraline highlights.
