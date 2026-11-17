@@ -3,7 +3,7 @@ name: Qualify review.nvim tab
 on:
   push:
     branches: ["edjubert/cadencr-review-tab-v*"]
-    tags: ["cadencr-v*"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 

@@ -13,7 +13,7 @@ import { digest, sourceInputs, verifyNativeReceipt } from "../scripts/receipts.m
 test("a mismatched release tag fails before packaging or calling the registry CLI", () => {
   const result = spawnSync(process.execPath,
     [fileURLToPath(new URL("../scripts/package.mjs", import.meta.url))], {
-      env: { ...process.env, GITHUB_REF: "refs/tags/cadencr-v999.0.0", CADENCR_CLI: "/missing/fixture-cli" },
+      env: { ...process.env, GITHUB_REF: "refs/tags/v999.0.0", CADENCR_CLI: "/missing/fixture-cli" },
       encoding: "utf8",
     });
   assert.equal(result.status, 1);

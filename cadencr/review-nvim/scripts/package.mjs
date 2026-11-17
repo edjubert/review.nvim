@@ -10,7 +10,7 @@ import { requireCleanSource } from "./source.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const manifest = JSON.parse(await readFile(`${root}/tab.json`, "utf8"));
-const releaseTag = `cadencr-v${manifest.version}`;
+const releaseTag = `v${manifest.version}`;
 if (process.env.GITHUB_REF?.startsWith("refs/tags/") &&
     process.env.GITHUB_REF !== `refs/tags/${releaseTag}`) {
   throw new Error(`The release tag must match the manifest version: ${releaseTag}`);

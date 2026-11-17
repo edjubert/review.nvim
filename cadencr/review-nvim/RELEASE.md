@@ -1,7 +1,7 @@
 # CadencR 0.1.9 release procedure
 
 Published tags and assets for earlier versions must remain unchanged.
-The source version for this release is `cadencr-v0.1.9`.
+The source version for this release is `v0.1.9`.
 
 ## Build evidence
 
@@ -9,7 +9,7 @@ The source version for this release is `cadencr-v0.1.9`.
    license packaging and pinned toolchain configuration.
 2. Push the source branch and let `Qualify review.nvim tab` complete. Check all
    three native jobs and the packaging job; a cross-build is insufficient.
-3. Tag the exact successful source commit with `cadencr-v0.1.9`. The tag must
+3. Tag the exact successful source commit with `v0.1.9`. The tag must
    match `tab.json` and the source commit in every receipt.
 4. Use the successful **tag run's** `release-candidate` artifact. Preserve its
    run URL/attempt, `build-receipt.json`, native test logs, registry validation

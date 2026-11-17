@@ -168,7 +168,7 @@ The workflow's `release-candidate` artifact contains:
 | `registry-validation.json` | Author validation against the pinned trusted base |
 
 The author release URLs use
-`https://github.com/edjubert/review.nvim/releases/download/cadencr-v0.1.9/`.
+`https://github.com/edjubert/review.nvim/releases/download/v0.1.9/`.
 Update `tab.json`, `package.json` and the lockfile's root version together.
 Minimum app compatibility is `0.16.0`.
 
@@ -180,7 +180,7 @@ The Lua runtime also contains the project's `LICENSES/`, including gemoji.
 The manifest version identifies the CadencR integration, independently of any
 review.nvim source release.
 
-Packaging is local. Publishing the `cadencr-v0.1.9` source release and submitting
+Packaging is local. Publishing the `v0.1.9` source release and submitting
 the generated metadata to CadencR's registry are separate, explicit operations.
 No unsigned feed or direct marketplace installation is created.
 
