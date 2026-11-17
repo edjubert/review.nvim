@@ -1,7 +1,7 @@
-# CadencR 0.1.7 release procedure
+# CadencR 0.1.8 release procedure
 
 Published tags and assets for earlier versions must remain unchanged.
-The source version for this release is `cadencr-v0.1.7`.
+The source version for this release is `cadencr-v0.1.8`.
 
 ## Build evidence
 
@@ -9,7 +9,7 @@ The source version for this release is `cadencr-v0.1.7`.
    license packaging and pinned toolchain configuration.
 2. Push the source branch and let `Qualify review.nvim tab` complete. Check all
    three native jobs and the packaging job; a cross-build is insufficient.
-3. Tag the exact successful source commit with `cadencr-v0.1.7`. The tag must
+3. Tag the exact successful source commit with `cadencr-v0.1.8`. The tag must
    match `tab.json` and the source commit in every receipt.
 4. Use the successful **tag run's** `release-candidate` artifact. Preserve its
    run URL/attempt, `build-receipt.json`, native test logs, registry validation
@@ -39,8 +39,8 @@ release. Never delete, replace or retag published releases.
 
 ## Registry contribution and maintainer actions
 
-The generated `packages/review-nvim-0.1.7.json` and matching
-`submissions/review-nvim-0.1.7.json` contain exact source and artifact digests.
+The generated `packages/review-nvim-0.1.8.json` and matching
+`submissions/review-nvim-0.1.8.json` contain exact source and artifact digests.
 Submit those files in a new registry PR after the immutable release is public.
 Include the source tag/commit, immutable release URL, tag workflow URL,
 attestation verification and native qualification evidence in its description.
