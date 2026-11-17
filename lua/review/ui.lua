@@ -157,18 +157,25 @@ local function stack_group(status)
   return "ReviewStackPending"
 end
 
-local function stack_status_text(state)
+local function stack_pipeline_line(state)
   if not state then return nil end
-  local approvals = state.approvals or 0
+  local group = state.pipeline == "failed" and "ReviewStackBlocked"
+    or state.pipeline == "success" and "ReviewStackReady" or "ReviewStackPending"
+  return { text = "Pipeline: " .. status.label(state.pipeline), group = group }
+end
+
+local function stack_review_line(state)
+  if not state then return nil end
+  local approvals, changes = state.approvals or 0, state.changes_requested or 0
   local parts = {
-    "Pipeline: " .. status.label(state.pipeline),
     approvals == 0 and "no approval" or (approvals == 1 and "1 approval" or (approvals .. " approvals")),
   }
-  local changes = state.changes_requested or 0
   if changes > 0 then
     parts[#parts + 1] = changes == 1 and "1 change request" or (changes .. " change requests")
   end
-  return table.concat(parts, " · ")
+  local group = changes > 0 and "ReviewStackBlocked"
+    or state.approved and "ReviewStackReady" or "ReviewStackPending"
+  return { text = table.concat(parts, " · "), group = group }
 end
 
 -- Show the untruncated panel entry under the cursor in a small floating box.
@@ -184,32 +191,35 @@ function M.hover(session)
   if session.hover_row == row and session.hover_win and vim.api.nvim_win_is_valid(session.hover_win) then return end
   close_hover(session)
   local entry = item.stack and session.stack and session.stack.entries[item.stack]
-  local status_text = entry and stack_status_text(entry.status)
+  local status_lines = {}
+  if entry then
+    for _, line in ipairs({ stack_pipeline_line(entry.status), stack_review_line(entry.status) }) do
+      if line then status_lines[#status_lines + 1] = line end
+    end
+  end
   local hint = item.stack and M.key(session, "stack_open")
   local hint_text = hint and (hint .. ": open in browser") or nil
-  local widest = math.max(display_width(text),
-    status_text and display_width(status_text) or 0,
-    hint_text and display_width(hint_text) or 0)
+  local widest = display_width(text)
+  for _, line in ipairs(status_lines) do widest = math.max(widest, display_width(line.text)) end
+  if hint_text then widest = math.max(widest, display_width(hint_text)) end
   local width = math.max(1, math.min(widest, 80, math.max(20, vim.o.columns - 8)))
   local lines = wrap_text(text, width)
-  local status_line
-  if status_text then
-    status_line = #lines + 1
-    lines[#lines + 1] = status_text
+  local marks = {}
+  for _, line in ipairs(status_lines) do
+    lines[#lines + 1] = line.text
+    marks[#marks + 1] = { #lines - 1, line.text, line.group }
   end
-  if hint_text then lines[#lines + 1] = hint_text end
+  if hint_text then
+    lines[#lines + 1] = hint_text
+    marks[#marks + 1] = { #lines - 1, hint_text, "ReviewHelp" }
+  end
   serial = serial + 1
   local buf = scratch("review://hover/" .. serial, "")
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
-  if status_line then
-    vim.api.nvim_buf_set_extmark(buf, namespace, status_line - 1, 0, {
-      end_col = #status_text, hl_group = stack_group(entry.status),
-    })
-  end
-  if hint_text then
-    vim.api.nvim_buf_set_extmark(buf, namespace, #lines - 1, 0, {
-      end_col = #hint_text, hl_group = "ReviewHelp",
+  for _, mark in ipairs(marks) do
+    vim.api.nvim_buf_set_extmark(buf, namespace, mark[1], 0, {
+      end_col = #mark[2], hl_group = mark[3],
     })
   end
   local below = vim.fn.winheight(0) - vim.fn.winline() >= #lines + 1

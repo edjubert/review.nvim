@@ -395,8 +395,8 @@ Set an icon to `""` to hide it. `Enter` on a stack line opens that review, like
 `:ReviewStackNext` and `:ReviewStackPrev`. `:ReviewStackOpen` opens the selected
 review in the browser; enable `keymaps.stack_open` for a shortcut, `<C-b>` in
 the example above. Resting the cursor on a truncated title shows the full title,
-the pipeline and approval status, and the browser shortcut when it is
-configured.
+the pipeline status and the approval status on their own coloured lines, and the
+browser shortcut when it is configured.
 `:ReviewStack` lists the chain with full titles and drafts. Opening another
 review closes the current review tab and loads the selected one in a new tab;
 local drafts stay on disk.
