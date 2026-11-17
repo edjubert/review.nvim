@@ -411,14 +411,14 @@ return function(h)
     vim.api.nvim_win_set_cursor(s.panel_win, { 2, 0 })
     ui.hover(s)
     eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), {
-      long, "Pipeline: failed", "1 approval · 2 change requests",
+      long, "Pipeline: failed", "Approval: 1 · 2 change requests",
     })
     eq(groups()[1], "ReviewStackBlocked")
     eq(groups()[2], "ReviewStackBlocked")
     vim.api.nvim_win_set_cursor(s.panel_win, { 3, 0 })
     ui.hover(s)
     eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), {
-      long, "Pipeline: success", "no approval",
+      long, "Pipeline: success", "Approval: 0",
     })
     eq(groups()[1], "ReviewStackReady")
     eq(groups()[2], "ReviewStackPending")

@@ -167,15 +167,13 @@ end
 local function stack_review_line(state)
   if not state then return nil end
   local approvals, changes = state.approvals or 0, state.changes_requested or 0
-  local parts = {
-    approvals == 0 and "no approval" or (approvals == 1 and "1 approval" or (approvals .. " approvals")),
-  }
+  local text = "Approval: " .. approvals
   if changes > 0 then
-    parts[#parts + 1] = changes == 1 and "1 change request" or (changes .. " change requests")
+    text = text .. " · " .. (changes == 1 and "1 change request" or (changes .. " change requests"))
   end
   local group = changes > 0 and "ReviewStackBlocked"
     or state.approved and "ReviewStackReady" or "ReviewStackPending"
-  return { text = table.concat(parts, " · "), group = group }
+  return { text = text, group = group }
 end
 
 -- Show the untruncated panel entry under the cursor in a small floating box.
