@@ -66,7 +66,7 @@ local config = {
   state_dir = root .. "/state", cache_dir = root .. "/cache", panel_width = 30,
   stack_icons = {
     approved = "👌", changes_requested = "👎",
-    pipeline_success = "✅", pipeline_running = "🔄", pipeline_failed = "❌",
+    pipeline_success = "✅", pipeline_running = "◐", pipeline_failed = "❌",
   },
   -- Mapping fixtures opt in explicitly; the plugin has no default shortcuts.
   keymaps = {

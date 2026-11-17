@@ -355,11 +355,11 @@ the review below it. The panel lists every review of the stack under the title,
 with the current one marked by `▶`:
 
 ```
-  !1406 🔄 Draft: refactor(campaign): simplify persistenc…
-  !1407 🔄 Draft: feat(campaign): configure retention gro…
-▶ !1408 🔄 Draft: feat(s3): tag campaign uploads DATA-158…
-  !1409 🔄 Draft: feat(s3): backfill migration object tag…
-  !1410 🔄 Draft: feat(s3): create campaign and shared GE…
+  !1406 ◐ Draft: refactor(campaign): simplify persistenc…
+  !1407 ◐ Draft: feat(campaign): configure retention gro…
+▶ !1408 ◐ Draft: feat(s3): tag campaign uploads DATA-158…
+  !1409 ◐ Draft: feat(s3): backfill migration object tag…
+  !1410 ◐ Draft: feat(s3): create campaign and shared GE…
 ```
 
 Each line shows the approvals, the change requests and the pipeline state:
@@ -369,7 +369,7 @@ Each line shows the approvals, the change requests and the pipeline state:
 | `👌` | One approval, repeated per approval |
 | `👎` | One change request, repeated per request |
 | `✅` | Pipeline passed |
-| `🔄` | Pipeline running or pending |
+| `◐` | Pipeline running or pending |
 | `❌` | Pipeline failed |
 
 The title is green when the approvals are satisfied and the pipeline passed,
@@ -382,7 +382,7 @@ require("review").setup({
     approved = "👌",
     changes_requested = "👎",
     pipeline_success = "✅",
-    pipeline_running = "🔄",
+    pipeline_running = "◐",
     pipeline_failed = "❌",
   },
 })
@@ -1186,7 +1186,7 @@ require("review").setup({
   keymaps = {},           -- all shortcuts disabled; see Optional buffer mappings
   stack_icons = {         -- one icon per approval, change request and pipeline state
     approved = "👌", changes_requested = "👎",
-    pipeline_success = "✅", pipeline_running = "🔄", pipeline_failed = "❌",
+    pipeline_success = "✅", pipeline_running = "◐", pipeline_failed = "❌",
   },
   clone_protocol = "ssh", -- or "https"; uses existing Git credentials
   repo = nil,            -- optional repository path; otherwise auto-detected

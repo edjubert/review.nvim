@@ -412,7 +412,7 @@ CONFIGURATION                                                  *review-setup*
       keymaps = {}, -- all mappings disabled
       stack_icons = { -- one icon per approval, change request and pipeline state
         approved = "👌", changes_requested = "👎",
-        pipeline_success = "✅", pipeline_running = "🔄", pipeline_failed = "❌",
+        pipeline_success = "✅", pipeline_running = "◐", pipeline_failed = "❌",
       },
       clone_protocol = "ssh",
       repo = nil,
