@@ -875,8 +875,8 @@ local function float(title, lines, writable, config)
   set_lines(buf, lines)
   vim.bo[buf].modifiable = writable or false
   if writable then vim.bo[buf].buftype = "acwrite" end
-  local width = math.max(20, math.min(90, vim.o.columns - 6))
-  local height = math.max(3, math.min(22, vim.o.lines - 6))
+  local width = math.max(20, math.min(140, vim.o.columns - 6))
+  local height = math.max(3, math.min(40, vim.o.lines - 6))
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor", width = width, height = height,
     col = math.max(0, math.floor((vim.o.columns - width) / 2)),
