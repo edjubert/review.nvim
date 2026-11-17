@@ -129,7 +129,7 @@ return function(h)
     s.stack = { entries = entries, index = 1 }
     ui.panel(s)
     eq(vim.api.nvim_buf_get_lines(s.panel_buf, 1, 5, false), {
-      "▶ !12 👌 👌 ✅ Ready", "  !13 👎 ❌ Blocked", "  !14 ◐ Waiting", "  !15 Unknown",
+      "▶ !12 👌 👌 ✅ Ready", "  !13 👎 ❌ Blocked", "  !14 ⧗ Waiting", "  !15 Unknown",
     })
     local groups = {}
     for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(s.panel_buf,

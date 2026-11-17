@@ -25,7 +25,7 @@ local defaults = {
     approved = "👌",
     changes_requested = "👎",
     pipeline_success = "✅",
-    pipeline_running = "◐",
+    pipeline_running = "⧗",
     pipeline_failed = "❌",
   },
   cache_dir = vim.fn.stdpath("cache") .. "/review",
