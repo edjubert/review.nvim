@@ -362,6 +362,33 @@ return function(h)
     s:close()
   end)
 
+  test("a review decision reloads the stack statuses", function()
+    local s = h.fixture()
+    s.stack = { entries = chain, index = 1 }
+    local calls = 0
+    s.provider = {
+      name = "Mock", prefix = "!", label = "merge request", kind = "MR",
+      current = function()
+        return { diff_refs = { base_sha = "base", head_sha = "head", start_sha = "start" } }
+      end,
+      status = function()
+        return { pipeline = { state = "success" }, review = { state = "approved", approvals = 1 } }
+      end,
+      stack_status = function()
+        calls = calls + 1
+        return { [12] = { pipeline = "success", approvals = 1, changes_requested = 0, approved = true } }
+      end,
+    }
+    s.data = {
+      mr = { diff_refs = { base_sha = "base", head_sha = "head", start_sha = "start" } },
+      status = {},
+    }
+    s:update_status()
+    assert(vim.wait(1000, function() return calls == 1 end, 10), "stack statuses were not reloaded")
+    eq(s.stack.entries[1].status.approvals, 1)
+    s:close()
+  end)
+
   test("stack navigation opens the neighbouring review URL", function()
     local s = h.fixture()
     s.stack = { entries = chain, index = 2 }

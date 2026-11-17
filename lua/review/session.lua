@@ -73,6 +73,29 @@ function Session:update_status()
     notify("Review status could not be refreshed. Run :ReviewRefresh.", vim.log.levels.WARN)
   end
   ui.panel(self)
+  self:reload_stack_status()
+end
+
+-- A decision changes the approvals of the current review, so the stack lines
+-- must not keep the statuses read before it.
+function Session:reload_stack_status()
+  local stack = self.stack
+  if self.closed or not stack or not self.provider.stack_status then return end
+  async.run(function()
+    local ok, statuses = pcall(self.provider.stack_status, self.target, stack.entries)
+    if self.closed or self.stack ~= stack then return end
+    if ok then
+      for _, entry in ipairs(stack.entries) do entry.status = statuses[entry.iid] end
+      self.stack_status_error = nil
+    else
+      self.stack_status_error = tostring(statuses)
+    end
+    ui.panel(self)
+  end, function(err)
+    if self.closed or self.stack ~= stack then return end
+    self.stack_status_error = err
+    ui.panel(self)
+  end)
 end
 
 function Session:cancel_reactions()
