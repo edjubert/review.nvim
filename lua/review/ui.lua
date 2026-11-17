@@ -85,6 +85,93 @@ function M.valid(session)
   return not session.closed and session.tab and vim.api.nvim_tabpage_is_valid(session.tab)
 end
 
+local function display_width(text)
+  return vim.fn.strdisplaywidth(text)
+end
+
+local function truncate(text, width)
+  if width <= 0 then return "" end
+  if display_width(text) <= width then return text end
+  local limit, low, high = math.max(0, width - 1), 0, vim.fn.strchars(text)
+  while low < high do
+    local middle = math.ceil((low + high) / 2)
+    if display_width(vim.fn.strcharpart(text, 0, middle)) <= limit then low = middle
+    else high = middle - 1 end
+  end
+  return vim.fn.strcharpart(text, 0, low) .. "…"
+end
+
+local function close_hover(session)
+  if session.hover_win and vim.api.nvim_win_is_valid(session.hover_win) then
+    vim.api.nvim_win_close(session.hover_win, true)
+  end
+  if session.hover_buf and vim.api.nvim_buf_is_valid(session.hover_buf) then
+    vim.api.nvim_buf_delete(session.hover_buf, { force = true })
+  end
+  session.hover_win, session.hover_buf, session.hover_row = nil, nil, nil
+end
+
+local function wrap_text(text, width)
+  local lines, current = {}, ""
+  for _, word in ipairs(vim.split(text, "%s+", { trimempty = true })) do
+    local candidate = current == "" and word or (current .. " " .. word)
+    if display_width(candidate) <= width then
+      current = candidate
+    else
+      if current ~= "" then lines[#lines + 1] = current end
+      -- A single word wider than the box is split by characters.
+      while display_width(word) > width do
+        local cut = vim.fn.strchars(word)
+        while cut > 0 and display_width(vim.fn.strcharpart(word, 0, cut)) > width do
+          cut = cut - 1
+        end
+        lines[#lines + 1] = vim.fn.strcharpart(word, 0, cut)
+        word = vim.fn.strcharpart(word, cut)
+      end
+      current = word
+    end
+  end
+  if current ~= "" then lines[#lines + 1] = current end
+  return #lines > 0 and lines or { "" }
+end
+
+-- Show the untruncated panel entry under the cursor in a small floating box.
+function M.hover(session)
+  if not M.valid(session) or not vim.api.nvim_win_is_valid(session.panel_win)
+      or vim.api.nvim_get_current_win() ~= session.panel_win then
+    return close_hover(session)
+  end
+  local row = vim.api.nvim_win_get_cursor(session.panel_win)[1]
+  local item = (session.panel_entries or {})[row]
+  local text = item and item.hover
+  if not text then return close_hover(session) end
+  if session.hover_row == row and session.hover_win and vim.api.nvim_win_is_valid(session.hover_win) then return end
+  close_hover(session)
+  local width = math.max(1, math.min(display_width(text), 80, math.max(20, vim.o.columns - 8)))
+  local lines = wrap_text(text, width)
+  serial = serial + 1
+  local buf = scratch("review://hover/" .. serial, "")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  local below = vim.fn.winheight(0) - vim.fn.winline() >= #lines + 1
+  local win = vim.api.nvim_open_win(buf, false, {
+    relative = "cursor", row = below and 1 or (-#lines - 1), col = 0,
+    width = width, height = #lines,
+    style = "minimal", border = "rounded", focusable = false, noautocmd = true,
+  })
+  vim.wo[win].wrap = false
+  session.hover_win, session.hover_buf, session.hover_row = win, buf, row
+end
+
+local function schedule_hover(session)
+  session.hover_generation = (session.hover_generation or 0) + 1
+  local generation = session.hover_generation
+  close_hover(session)
+  vim.defer_fn(function()
+    if session.hover_generation == generation then M.hover(session) end
+  end, 180)
+end
+
 function M.key(session, name)
   return (session.config.keymaps or {})[name] or false
 end
@@ -198,6 +285,18 @@ function M.create(session)
     group = session.ui_group,
     callback = function()
       if vim.v.event[tostring(session.panel_win)] then M.filter(session) end
+    end,
+  })
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = session.ui_group,
+    buffer = session.panel_buf,
+    callback = function() schedule_hover(session) end,
+  })
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = session.ui_group,
+    callback = function()
+      session.hover_generation = (session.hover_generation or 0) + 1
+      close_hover(session)
     end,
   })
   vim.api.nvim_create_autocmd("WinClosed", {
@@ -323,6 +422,8 @@ function M.help(session)
 end
 
 function M.close(session)
+  session.hover_generation = (session.hover_generation or 0) + 1
+  close_hover(session)
   if session.ui_group then
     pcall(vim.api.nvim_del_augroup_by_id, session.ui_group)
     session.ui_group = nil
@@ -575,22 +676,6 @@ function M.panel_action(session, action)
   end
 end
 
-local function display_width(text)
-  return vim.fn.strdisplaywidth(text)
-end
-
-local function truncate(text, width)
-  if width <= 0 then return "" end
-  if display_width(text) <= width then return text end
-  local limit, low, high = math.max(0, width - 1), 0, vim.fn.strchars(text)
-  while low < high do
-    local middle = math.ceil((low + high) / 2)
-    if display_width(vim.fn.strcharpart(text, 0, middle)) <= limit then low = middle
-    else high = middle - 1 end
-  end
-  return vim.fn.strcharpart(text, 0, low) .. "…"
-end
-
 local function stack_icons(session, status)
   if not status then return "" end
   local icons, parts = session.config.stack_icons or {}, {}
@@ -614,9 +699,7 @@ local function stack_group(status)
 end
 
 -- One line per review, with its approvals, change requests and pipeline.
-local function stack_lines(session, stack)
-  local width = session.panel_win and vim.api.nvim_win_is_valid(session.panel_win)
-    and vim.api.nvim_win_get_width(session.panel_win) or (session.config.panel_width or 44)
+local function stack_lines(session, stack, width)
   width = math.max(12, width - 1)
   local lines = {}
   for index, entry in ipairs(stack.entries) do
@@ -628,6 +711,7 @@ local function stack_lines(session, stack)
     local title = truncate(entry.title or "", width - display_width(head))
     lines[#lines + 1] = {
       text = head .. title, index = index,
+      truncated = title ~= (entry.title or ""), full_title = entry.title or "",
       label_start = 0, label_finish = #marker + #label,
       label_group = current and "ReviewPanelTitle" or "ReviewHelp",
       title_start = #head, title_finish = #head + #title,
@@ -639,6 +723,9 @@ end
 
 function M.panel(session)
   if not M.valid(session) or not vim.api.nvim_buf_is_valid(session.panel_buf) then return end
+  close_hover(session)
+  local width = session.panel_win and vim.api.nvim_win_is_valid(session.panel_win)
+    and vim.api.nvim_win_get_width(session.panel_win) or (session.config.panel_width or 44)
   local anchor
   if session.panel_win and vim.api.nvim_win_is_valid(session.panel_win) then
     anchor = (session.panel_entries or {})[vim.api.nvim_win_get_cursor(session.panel_win)[1]]
@@ -655,9 +742,11 @@ function M.panel(session)
     decorations[#decorations + 1] = { line = line, start = start, finish = finish, group = group }
   end
   if session.stack then
-    for _, line in ipairs(stack_lines(session, session.stack)) do
+    for _, line in ipairs(stack_lines(session, session.stack, width)) do
       lines[#lines + 1] = line.text
-      session.panel_entries[#lines] = { stack = line.index }
+      local item = { stack = line.index }
+      if line.truncated then item.hover = line.full_title end
+      session.panel_entries[#lines] = item
       highlight(#lines, line.label_start, line.label_finish, line.label_group)
       if line.title_finish > line.title_start then
         highlight(#lines, line.title_start, line.title_finish, line.title_group)
@@ -672,8 +761,9 @@ function M.panel(session)
     highlight(#lines, 0, #lines[#lines], "ReviewStatusWarn")
   end
   lines[#lines + 1] = ""
-  local function entry(text, item, group, selected)
+  local function entry(text, item, group, selected, hover)
     lines[#lines + 1] = text
+    if hover and display_width(text) > width then item.hover = hover end
     session.panel_entries[#lines] = item
     highlight(#lines, 0, #text, group)
     if selected then
@@ -776,7 +866,7 @@ function M.panel(session)
   if session.commit_index == 0 then files() end
   for index, commit in ipairs(session.data and session.data.commits or {}) do
     entry((session.commit_index == index and "▾ " or "▸ ") .. commit.id:sub(1, 8) .. " " .. commit.title,
-      { commit = index }, "ReviewCommit", session.commit_index == index)
+      { commit = index }, "ReviewCommit", session.commit_index == index, commit.title)
     highlight(#lines, #"▸ ", #"▸ " + #commit.id:sub(1, 8), "ReviewCommitSha")
     if session.commit_index == index then files() end
   end

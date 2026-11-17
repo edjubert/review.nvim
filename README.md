@@ -342,6 +342,8 @@ added lines form one block; navigation stays within the current file.
 Use `:ReviewNextFile` for the next file.
 Opening a file automatically places the cursor on its first change block,
 opens any folds covering that line, and centers the diff view there.
+Resting the cursor on a commit title that the panel truncates shows the full
+title in a floating box.
 
 ### Review stacks
 
@@ -384,9 +386,10 @@ require("review").setup({
 ```
 
 Set an icon to `""` to hide it. `Enter` on a stack line opens that review, like
-`:ReviewStackNext` and `:ReviewStackPrev`. `:ReviewStack` lists the chain with
-full titles and drafts. Opening another review closes the current review tab and
-loads the selected one in a new tab; local drafts stay on disk.
+`:ReviewStackNext` and `:ReviewStackPrev`. Resting the cursor on a truncated
+title shows the full title in a floating box. `:ReviewStack` lists the chain
+with full titles and drafts. Opening another review closes the current review
+tab and loads the selected one in a new tab; local drafts stay on disk.
 
 Statuses come from one aliased GraphQL query per refresh on GitLab and GitHub.
 Codeberg reads each pull request in turn. GitLab exposes change requests as a

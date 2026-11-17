@@ -98,7 +98,9 @@ COMMANDS
     In a discussion window, jump to the selected comment's diff line.
 
 :ReviewNextCommit / :ReviewPrevCommit                    *:ReviewNextCommit*
-    Select the next/previous commit in the review.
+    Select the next/previous commit in the review. Resting the cursor on a
+    commit title that the panel truncates shows the full title in a floating
+    box.
 
 :ReviewNextFile / :ReviewPrevFile                            *:ReviewNextFile*
     Select the next/previous changed file.
@@ -122,7 +124,8 @@ COMMANDS
     passed, running or failed. The title is green when the approvals are
     satisfied and the pipeline passed, blue when an approval is missing or the
     pipeline is still running, and red when a change is requested or the
-    pipeline failed. Enter on a stack line opens that review.
+    pipeline failed. Enter on a stack line opens that review. Resting the
+    cursor on a truncated title shows the full title in a floating box.
     Opening another review closes the current review tab; local drafts stay on
     disk.
     A stack is a chain of open reviews where each one targets the source branch

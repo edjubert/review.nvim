@@ -270,6 +270,57 @@ return function(h)
     end)
   end)
 
+  test("hovering a truncated stack line shows the full title", function()
+    local s = h.fixture()
+    local long = "A very long review title that the panel cannot display"
+    s.stack = { entries = {
+      { iid = 12, title = long, url = "u12" },
+      { iid = 13, title = "Short", url = "u13" },
+    }, index = 1 }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 2, 0 })
+    ui.hover(s)
+    assert(s.hover_win and vim.api.nvim_win_is_valid(s.hover_win), "no hover window")
+    eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), { long })
+    vim.api.nvim_win_set_cursor(s.panel_win, { 3, 0 })
+    ui.hover(s)
+    eq(s.hover_win, nil)
+    s:close()
+  end)
+
+  test("hovering a truncated commit line shows the full title", function()
+    local s = h.fixture()
+    local long = "A very long commit title that the panel cannot display"
+    s.data.commits = { { id = "abcdef1234567890", parent_ids = { "base" }, title = long } }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    local row
+    for index, item in pairs(s.panel_entries) do
+      if item.commit == 1 then row = index end
+    end
+    assert(row, "no commit row")
+    vim.api.nvim_win_set_cursor(s.panel_win, { row, 0 })
+    ui.hover(s)
+    assert(s.hover_win and vim.api.nvim_win_is_valid(s.hover_win), "no hover window")
+    eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), { long })
+    s:close()
+  end)
+
+  test("the hover follows the panel cursor after a short delay", function()
+    local s = h.fixture()
+    local long = "A very long review title that the panel cannot display"
+    s.stack = { entries = { { iid = 12, title = long, url = "u12" } }, index = 1 }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 2, 0 })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = s.panel_buf })
+    assert(vim.wait(1000, function() return s.hover_win ~= nil end, 10), "no hover window")
+    eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), { long })
+    s:close()
+    eq(s.hover_win, nil)
+  end)
+
   test("stack navigation opens the neighbouring review URL", function()
     local s = h.fixture()
     s.stack = { entries = chain, index = 2 }
