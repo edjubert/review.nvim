@@ -185,7 +185,7 @@ merge base.
 | `:ReviewComplete` | Show the complete MR/PR comparison |
 | `:ReviewStack` | Choose another review in the stack |
 | `:ReviewStackNext` / `:ReviewStackPrev` | Open the next / previous review in the stack |
-| `:ReviewStackOpen` | Open the selected stack review in the browser |
+| `:ReviewStackOpen` | Open the review under the cursor in the browser |
 | `:ReviewPanel <action>` | Open or fold the selected panel entry |
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewHelp` | Search commands, configured mappings and their context in Telescope |
@@ -392,11 +392,12 @@ require("review").setup({
 ```
 
 Set an icon to `""` to hide it. `Enter` on a stack line opens that review, like
-`:ReviewStackNext` and `:ReviewStackPrev`. `:ReviewStackOpen` opens the selected
-review in the browser; enable `keymaps.stack_open` for a shortcut, `<C-b>` in
-the example above. Resting the cursor on a truncated title shows the full title,
-the pipeline status and the approval status on their own coloured lines, and the
-browser shortcut when it is configured.
+`:ReviewStackNext` and `:ReviewStackPrev`. `:ReviewStackOpen` opens the review
+under the cursor in the browser, or the current review anywhere else in the
+panel; enable `keymaps.stack_open` for a shortcut, `<C-b>` in the example above.
+Resting the cursor on a truncated title shows the full title, the pipeline
+status and the approval status on their own coloured lines, and the browser
+shortcut when it is configured.
 `:ReviewStack` lists the chain with full titles and drafts. Opening another
 review closes the current review tab and loads the selected one in a new tab;
 local drafts stay on disk.

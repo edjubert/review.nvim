@@ -376,7 +376,7 @@ function M.create(session)
   bind(session, session.panel_buf, "search_files", function() session:search_files() end,
     "Filter changed files in the review panel")
   bind(session, session.panel_buf, "stack_open", function() session:open_stack_browser() end,
-    "Open the selected stack review in the browser")
+    "Open the review under the cursor in the browser")
   local tree_actions = {
     panel_open = "open", panel_left = "left", panel_right = "right",
     panel_toggle = "toggle", panel_expand = "expand", panel_collapse = "collapse",
@@ -436,7 +436,7 @@ function M.help(session)
     { ":ReviewStack", "stack", "Choose another review in the stack" },
     { ":ReviewStackNext", "stack_next", "Open the next review in the stack" },
     { ":ReviewStackPrev", "stack_prev", "Open the previous review in the stack" },
-    { ":ReviewStackOpen", "stack_open", "Open the selected stack review in the browser", "Panel" },
+    { ":ReviewStackOpen", "stack_open", "Open the review under the cursor in the browser", "Panel" },
     { ":ReviewFiles", "search_files", "Edit the sidebar file filter, or apply a query", "Panel" },
     { ":ReviewFilesClear", false, "Clear the filter and restore directory folds", "Panel" },
     { "Return to file tree", "filter_exit", "Keep the query and return to the tree; native Enter and Ctrl-C also work", "File filter" },

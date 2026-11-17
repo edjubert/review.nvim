@@ -594,12 +594,9 @@ end
 
 function Session:open_stack_browser()
   if self.closed or not ui.valid(self) then return end
+  -- A stack line opens its own review; anywhere else opens the current one.
   local entry = self:stack_entry_at_cursor()
-  if not entry then
-    notify("Use this command on a review in the stack.", vim.log.levels.WARN)
-    return
-  end
-  local web_url = entry.url
+  local web_url = entry and entry.url or self.target.url
   if type(web_url) ~= "string" or not web_url:match("^https?://%S+$") or web_url:find("%c") then
     notify("No URL is available for this review.", vim.log.levels.WARN)
     return

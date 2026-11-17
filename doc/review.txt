@@ -143,9 +143,10 @@ COMMANDS
     shortcuts; the optional example uses <leader>rS, ]s and [s.
 
 :ReviewStackOpen                                          *:ReviewStackOpen*
-    Open the review under the panel's cursor in the browser. The cursor must
-    be on a stack line. Enable keymaps.stack_open for a shortcut; the optional
-    example uses <C-b>. The hover box shows that shortcut when it is set.
+    Open the review under the panel's cursor in the browser. A stack line
+    opens its own review; anywhere else in the panel opens the current one.
+    Enable keymaps.stack_open for a shortcut; the optional example uses <C-b>.
+    The hover box shows that shortcut when it is set.
 
 :ReviewPanel {action}                                         *:ReviewPanel*
     Act on the panel entry under the panel's cursor, from either review window.

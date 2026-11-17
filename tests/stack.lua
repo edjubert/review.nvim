@@ -335,18 +335,17 @@ return function(h)
     s:close()
   end)
 
-  test("opening a stack review in the browser requires a stack line", function()
+  test("opening the browser outside a stack line uses the current review", function()
     local s = h.fixture()
     s.stack = { entries = chain, index = 1 }
     ui.panel(s)
     vim.api.nvim_set_current_win(s.panel_win)
     vim.api.nvim_win_set_cursor(s.panel_win, { 1, 0 })
-    local messages = {}
-    mocked({
-      { vim, "notify", function(message) messages[#messages + 1] = message end },
-      { vim.ui, "open", function() error("must not open a browser") end },
-    }, function() s:open_stack_browser() end)
-    eq(messages, { "Use this command on a review in the stack." })
+    local opened = {}
+    mocked({ { vim.ui, "open", function(value) opened[#opened + 1] = value; return true end } }, function()
+      s:open_stack_browser()
+    end)
+    eq(opened, { s.target.url })
     s:close()
   end)
 

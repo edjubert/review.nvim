@@ -269,7 +269,7 @@ function M._commands()
   session_command("ReviewStackPrev", function(session) session:move_stack(-1) end,
     { desc = "Open the previous review in the stack" })
   session_command("ReviewStackOpen", function(session) session:open_stack_browser() end,
-    { desc = "Open the selected stack review in the browser" })
+    { desc = "Open the review under the cursor in the browser" })
   local panel_actions = { "open", "left", "right", "toggle", "expand", "collapse", "collapse_all", "expand_all" }
   session_command("ReviewPanel", function(session, args)
     if not vim.tbl_contains(panel_actions, args.args) then error("Unknown ReviewPanel action: " .. args.args, 0) end
