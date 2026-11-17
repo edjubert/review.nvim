@@ -125,7 +125,8 @@ COMMANDS
     satisfied and the pipeline passed, blue when an approval is missing or the
     pipeline is still running, and red when a change is requested or the
     pipeline failed. Enter on a stack line opens that review. Resting the
-    cursor on a truncated title shows the full title in a floating box.
+    cursor on a truncated title shows the full title, the pipeline and approval
+    status, and the browser shortcut when it is set.
     Opening another review closes the current review tab; local drafts stay on
     disk.
     A stack is a chain of open reviews where each one targets the source branch

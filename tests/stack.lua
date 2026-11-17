@@ -389,6 +389,36 @@ return function(h)
     s:close()
   end)
 
+  test("the hover shows the pipeline and approval status", function()
+    local s = h.fixture()
+    local long = "A very long review title that the panel cannot display"
+    s.stack = { entries = {
+      { iid = 12, title = long, url = "u12",
+        status = { pipeline = "failed", approvals = 1, changes_requested = 2, approved = false } },
+      { iid = 13, title = long, url = "u13",
+        status = { pipeline = "success", approvals = 0, changes_requested = 0, approved = false } },
+    }, index = 1 }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 2, 0 })
+    ui.hover(s)
+    eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), {
+      long, "Pipeline: failed · 1 approval · 2 change requests",
+    })
+    local coloured = false
+    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(s.hover_buf,
+        vim.api.nvim_create_namespace("review"), 0, -1, { details = true })) do
+      if mark[2] == 1 and mark[4].hl_group == "ReviewStackBlocked" then coloured = true end
+    end
+    assert(coloured, "the status line is not coloured")
+    vim.api.nvim_win_set_cursor(s.panel_win, { 3, 0 })
+    ui.hover(s)
+    eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), {
+      long, "Pipeline: success · no approval",
+    })
+    s:close()
+  end)
+
   test("stack navigation opens the neighbouring review URL", function()
     local s = h.fixture()
     s.stack = { entries = chain, index = 2 }
