@@ -147,12 +147,22 @@ function M.hover(session)
   if not text then return close_hover(session) end
   if session.hover_row == row and session.hover_win and vim.api.nvim_win_is_valid(session.hover_win) then return end
   close_hover(session)
-  local width = math.max(1, math.min(display_width(text), 80, math.max(20, vim.o.columns - 8)))
+  local hint = item.stack and M.key(session, "stack_open")
+  local hint_text = hint and (hint .. ": open in browser") or nil
+  local width = math.max(1, math.min(
+    math.max(display_width(text), hint_text and display_width(hint_text) or 0),
+    80, math.max(20, vim.o.columns - 8)))
   local lines = wrap_text(text, width)
+  if hint_text then lines[#lines + 1] = hint_text end
   serial = serial + 1
   local buf = scratch("review://hover/" .. serial, "")
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
+  if hint_text then
+    vim.api.nvim_buf_set_extmark(buf, namespace, #lines - 1, 0, {
+      end_col = #hint_text, hl_group = "ReviewHelp",
+    })
+  end
   local below = vim.fn.winheight(0) - vim.fn.winline() >= #lines + 1
   local win = vim.api.nvim_open_win(buf, false, {
     relative = "cursor", row = below and 1 or (-#lines - 1), col = 0,
@@ -308,6 +318,8 @@ function M.create(session)
   M.bind(session, session.viewer_buf)
   bind(session, session.panel_buf, "search_files", function() session:search_files() end,
     "Filter changed files in the review panel")
+  bind(session, session.panel_buf, "stack_open", function() session:open_stack_browser() end,
+    "Open the selected stack review in the browser")
   local tree_actions = {
     panel_open = "open", panel_left = "left", panel_right = "right",
     panel_toggle = "toggle", panel_expand = "expand", panel_collapse = "collapse",
@@ -367,6 +379,7 @@ function M.help(session)
     { ":ReviewStack", "stack", "Choose another review in the stack" },
     { ":ReviewStackNext", "stack_next", "Open the next review in the stack" },
     { ":ReviewStackPrev", "stack_prev", "Open the previous review in the stack" },
+    { ":ReviewStackOpen", "stack_open", "Open the selected stack review in the browser", "Panel" },
     { ":ReviewFiles", "search_files", "Edit the sidebar file filter, or apply a query", "Panel" },
     { ":ReviewFilesClear", false, "Clear the filter and restore directory folds", "Panel" },
     { "Return to file tree", "filter_exit", "Keep the query and return to the tree; native Enter and Ctrl-C also work", "File filter" },

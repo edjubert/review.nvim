@@ -321,6 +321,47 @@ return function(h)
     eq(s.hover_win, nil)
   end)
 
+  test("opening a stack review in the browser uses its URL", function()
+    local s = h.fixture()
+    s.stack = { entries = chain, index = 1 }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 3, 0 })
+    local opened = {}
+    mocked({ { vim.ui, "open", function(value) opened[#opened + 1] = value; return true end } }, function()
+      s:open_stack_browser()
+    end)
+    eq(opened, { chain[2].url })
+    s:close()
+  end)
+
+  test("opening a stack review in the browser requires a stack line", function()
+    local s = h.fixture()
+    s.stack = { entries = chain, index = 1 }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 1, 0 })
+    local messages = {}
+    mocked({
+      { vim, "notify", function(message) messages[#messages + 1] = message end },
+      { vim.ui, "open", function() error("must not open a browser") end },
+    }, function() s:open_stack_browser() end)
+    eq(messages, { "Use this command on a review in the stack." })
+    s:close()
+  end)
+
+  test("the hover shows the browser shortcut for a stack review", function()
+    local s = h.fixture({ keymaps = { stack_open = "<C-b>" } })
+    local long = "A very long review title that the panel cannot display"
+    s.stack = { entries = { { iid = 12, title = long, url = "u12" } }, index = 1 }
+    ui.panel(s)
+    vim.api.nvim_set_current_win(s.panel_win)
+    vim.api.nvim_win_set_cursor(s.panel_win, { 2, 0 })
+    ui.hover(s)
+    eq(vim.api.nvim_buf_get_lines(s.hover_buf, 0, -1, false), { long, "<C-b>: open in browser" })
+    s:close()
+  end)
+
   test("stack navigation opens the neighbouring review URL", function()
     local s = h.fixture()
     s.stack = { entries = chain, index = 2 }

@@ -558,6 +558,33 @@ function Session:open_stack_entry(entry)
   require("review").open(entry.url)
 end
 
+function Session:stack_entry_at_cursor()
+  if not ui.valid(self) or not vim.api.nvim_win_is_valid(self.panel_win) then return nil end
+  if vim.api.nvim_get_current_win() ~= self.panel_win or not self.stack then return nil end
+  local row = vim.api.nvim_win_get_cursor(self.panel_win)[1]
+  local item = (self.panel_entries or {})[row]
+  if not item or not item.stack then return nil end
+  return self.stack.entries[item.stack]
+end
+
+function Session:open_stack_browser()
+  if self.closed or not ui.valid(self) then return end
+  local entry = self:stack_entry_at_cursor()
+  if not entry then
+    notify("Use this command on a review in the stack.", vim.log.levels.WARN)
+    return
+  end
+  local web_url = entry.url
+  if type(web_url) ~= "string" or not web_url:match("^https?://%S+$") or web_url:find("%c") then
+    notify("No URL is available for this review.", vim.log.levels.WARN)
+    return
+  end
+  local ok, job, err = pcall(vim.ui.open, web_url)
+  if not ok or not job then
+    notify("Could not open the review URL: " .. tostring(ok and err or job), vim.log.levels.ERROR)
+  end
+end
+
 function Session:move_stack(delta)
   if self.closed or not ui.valid(self) then return end
   if not self.stack then self:stack_unavailable(); return end

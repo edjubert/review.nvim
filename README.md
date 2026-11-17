@@ -185,6 +185,7 @@ merge base.
 | `:ReviewComplete` | Show the complete MR/PR comparison |
 | `:ReviewStack` | Choose another review in the stack |
 | `:ReviewStackNext` / `:ReviewStackPrev` | Open the next / previous review in the stack |
+| `:ReviewStackOpen` | Open the selected stack review in the browser |
 | `:ReviewPanel <action>` | Open or fold the selected panel entry |
 | `:ReviewInfo` | Show the MR/PR title and Markdown description |
 | `:ReviewHelp` | Search commands, configured mappings and their context in Telescope |
@@ -239,6 +240,7 @@ require("review").setup({
     stack = "<leader>rS",
     stack_next = "]s",
     stack_prev = "[s",
+    stack_open = "<C-b>",
     complete = "<leader>ra",
     drafts = "<leader>rd",
     threads = "<leader>rT",
@@ -300,6 +302,7 @@ With that example enabled:
 | `]h` / `[h` | Next / previous change block in the current file |
 | `]s` / `[s` | Next / previous review in the stack |
 | `<leader>rS` | Choose a review in the stack |
+| `<C-b>` in the panel | Open the selected stack review in the browser |
 | `<leader>ra` | Complete MR/PR |
 | `<leader>rc` in the diff, normal or visual mode | Comment on the line / range |
 | `<leader>rR` in the diff | Draft a reply to a discussion on the current line |
@@ -386,10 +389,13 @@ require("review").setup({
 ```
 
 Set an icon to `""` to hide it. `Enter` on a stack line opens that review, like
-`:ReviewStackNext` and `:ReviewStackPrev`. Resting the cursor on a truncated
-title shows the full title in a floating box. `:ReviewStack` lists the chain
-with full titles and drafts. Opening another review closes the current review
-tab and loads the selected one in a new tab; local drafts stay on disk.
+`:ReviewStackNext` and `:ReviewStackPrev`. `:ReviewStackOpen` opens the selected
+review in the browser; enable `keymaps.stack_open` for a shortcut, `<C-b>` in
+the example above. Resting the cursor on a truncated title shows the full title
+in a floating box, with the browser shortcut when it is configured.
+`:ReviewStack` lists the chain with full titles and drafts. Opening another
+review closes the current review tab and loads the selected one in a new tab;
+local drafts stay on disk.
 
 Statuses come from one aliased GraphQL query per refresh on GitLab and GitHub.
 Codeberg reads each pull request in turn. GitLab exposes change requests as a

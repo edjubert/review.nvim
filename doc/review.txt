@@ -139,6 +139,11 @@ COMMANDS
     Enable keymaps.stack, keymaps.stack_next and keymaps.stack_prev for
     shortcuts; the optional example uses <leader>rS, ]s and [s.
 
+:ReviewStackOpen                                          *:ReviewStackOpen*
+    Open the review under the panel's cursor in the browser. The cursor must
+    be on a stack line. Enable keymaps.stack_open for a shortcut; the optional
+    example uses <C-b>. The hover box shows that shortcut when it is set.
+
 :ReviewPanel {action}                                         *:ReviewPanel*
     Act on the panel entry under the panel's cursor, from either review window.
     Actions: open, left, right, toggle, expand, collapse, collapse_all, expand_all.
@@ -426,6 +431,7 @@ The README includes the same example.
       next_file = "]f", prev_file = "[f",
       next_hunk = "]h", prev_hunk = "[h",
       stack = "<leader>rS", stack_next = "]s", stack_prev = "[s",
+      stack_open = "<C-b>",
       complete = "<leader>ra", drafts = "<leader>rd",
       threads = "<leader>rT", submit = "<leader>rs",
       refresh = "<leader>rr", info = "<leader>ri", help = "<leader>r?",
