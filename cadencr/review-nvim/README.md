@@ -154,7 +154,7 @@ validation; the registry's own checks and maintainer consent remain required.
 If `cadencr` is not on `PATH`, set `CADENCR_CLI` to its executable path.
 After downloading the native artifacts to the repository's `artifacts/native/`
 and restoring the binaries under `bin/`, run `npm run package`. The destination
-defaults to `artifacts/release-0.1.9/` at the repository root and must not exist.
+defaults to `artifacts/release-0.1.10/` at the repository root and must not exist.
 The workflow's `release-candidate` artifact contains:
 
 | File | Contents |
@@ -170,7 +170,7 @@ The workflow's `release-candidate` artifact contains:
 | `registry-validation.json` | Author validation against the pinned trusted base |
 
 The author release URLs use
-`https://github.com/edjubert/review.nvim/releases/download/v0.1.9/`.
+`https://github.com/edjubert/review.nvim/releases/download/v0.1.10/`.
 Update `tab.json`, `package.json` and the lockfile's root version together.
 Minimum app compatibility is `0.16.0`.
 
@@ -182,7 +182,7 @@ The Lua runtime also contains the project's `LICENSES/`, including gemoji.
 The manifest version identifies the CadencR integration, independently of any
 review.nvim source release.
 
-Packaging is local. Publishing the `v0.1.9` source release and submitting
+Packaging is local. Publishing the `v0.1.10` source release and submitting
 the generated metadata to CadencR's registry are separate, explicit operations.
 No unsigned feed or direct marketplace installation is created.
 
