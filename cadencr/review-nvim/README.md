@@ -4,6 +4,8 @@ A custom `Review` tab for **CadencR 0.16.0+**. Opening it starts your installed
 Neovim in an embedded terminal, with the review.nvim runtime bundled in the tab.
 The conversation's MR/PR URL opens automatically. Without a URL, Neovim asks
 for one through Telescope; without Telescope, it uses `vim.ui.input`.
+`:Review <url>` opens another review in a new Neovim tab and keeps the current
+one open, so two reviews can stay side by side.
 
 The tab preserves the Neovim process when hidden or when its webview reloads.
 Closing the tab lets CadencR stop its backend after its normal grace period.

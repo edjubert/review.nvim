@@ -33,6 +33,11 @@ local defaults = {
 }
 M.config = vim.deepcopy(defaults)
 
+-- One review per Neovim tab. Opening another review keeps the current one, so
+-- two reviews can stay open side by side in their own tabs.
+M.sessions = {}
+M.session = nil
+
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   assert(M.config.clone_protocol == "ssh" or M.config.clone_protocol == "https", "clone_protocol must be ssh or https")
@@ -54,12 +59,41 @@ function M.setup(opts)
   end
 end
 
-function M.open(raw_url)
+-- The review of the current tab, else the last review the user focused. A
+-- command run from another tab keeps working on that review.
+local function live(session)
+  return session and not session.closed and session.tab
+    and vim.api.nvim_tabpage_is_valid(session.tab)
+end
+
+local function current()
+  local session = M.sessions[vim.api.nvim_get_current_tabpage()]
+  if live(session) then return session end
+  if live(M.session) then return M.session end
+end
+
+local function with_session(fn)
+  local session = current()
+  if not session then
+    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
+    return
+  end
+  fn(session)
+end
+
+function M._forget(session)
+  for tab, value in pairs(M.sessions) do
+    if value == session then M.sessions[tab] = nil end
+  end
+  if M.session == session then M.session = nil end
+end
+
+function M.open(raw_url, opts)
   if vim.fn.has("nvim-0.11") == 0 then
     vim.notify("review requires Neovim 0.11 or newer.", vim.log.levels.ERROR); return
   end
   if not raw_url or raw_url == "" then
-    vim.ui.input({ prompt = "GitLab MR / GitHub PR / Codeberg PR URL: " }, function(value) if value then M.open(value) end end)
+    vim.ui.input({ prompt = "GitLab MR / GitHub PR / Codeberg PR URL: " }, function(value) if value then M.open(value, opts) end end)
     return
   end
   local target, err = require("review.url").parse(raw_url)
@@ -71,181 +105,102 @@ function M.open(raw_url)
       return
     end
   end
-  if M.session then
-    if M.session.submitting or M.session.deciding or M.session.resolving then
-      vim.notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
-      return
+  -- Stack navigation replaces the review it leaves; :Review keeps it open.
+  if opts and opts.replace then
+    local previous = current()
+    if previous then
+      if previous.submitting or previous.deciding or previous.resolving then
+        vim.notify("Wait for the current review operation to finish.", vim.log.levels.WARN)
+        return
+      end
+      previous:close()
     end
-    M.session:close()
   end
   local ok, session = pcall(require("review.session").new, target, vim.deepcopy(M.config))
   if not ok then vim.notify(session, vim.log.levels.ERROR, { title = "review" }); return end
-  M.session = session
+  session.on_close = function() M._forget(session) end
   session:load()
+  if session.tab then M.sessions[session.tab] = session end
+  M.session = session
 end
 
 function M.comment(first, last)
-  local s = M.session
+  local s = current()
   if not s or vim.api.nvim_get_current_buf() ~= s.viewer_buf then
     vim.notify("Select a line in a review diff buffer first.", vim.log.levels.WARN); return
   end
   s:comment(first or vim.fn.line("."), last or first or vim.fn.line("."))
 end
 
-function M.refresh()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:refresh()
-end
+function M.refresh() with_session(function(s) s:refresh() end) end
 
-function M.approve()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:approve()
-end
+function M.approve() with_session(function(s) s:approve() end) end
 
-function M.request_changes()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:request_changes()
-end
+function M.request_changes() with_session(function(s) s:request_changes() end) end
 
 function M.reply()
-  local s = M.session
-  if not s or s.closed or vim.api.nvim_get_current_buf() ~= s.viewer_buf then
+  local s = current()
+  if not s or vim.api.nvim_get_current_buf() ~= s.viewer_buf then
     vim.notify("Use :ReviewReply on a commented review diff line.", vim.log.levels.WARN); return
   end
   s:reply()
 end
 
-function M.open_comment()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:open_comment()
-end
+function M.open_comment() with_session(function(s) s:open_comment() end) end
 
-function M.resolve()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:resolve()
-end
+function M.resolve() with_session(function(s) s:resolve() end) end
 
-function M.resolve_all()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:resolve_all()
-end
+function M.resolve_all() with_session(function(s) s:resolve_all() end) end
 
-function M.info()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:show_info()
-end
+function M.info() with_session(function(s) s:show_info() end) end
 
-function M.edit_description()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:edit_description()
-end
+function M.edit_description() with_session(function(s) s:edit_description() end) end
 
-function M.pipelines()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:show_pipelines()
-end
+function M.pipelines() with_session(function(s) s:show_pipelines() end) end
 
-function M.refresh_job()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  require("review.telescope").refresh_job(M.session)
-end
+function M.refresh_job() with_session(function(s) require("review.telescope").refresh_job(s) end) end
 
-function M.job_logs()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  require("review.telescope").select_job_log(M.session)
-end
+function M.job_logs() with_session(function(s) require("review.telescope").select_job_log(s) end) end
 
-function M.help()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  require("review.ui").help(M.session)
-end
+function M.help() with_session(function(s) require("review.ui").help(s) end) end
 
-function M.files(query)
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:search_files(query)
-end
+function M.files(query) with_session(function(s) s:search_files(query) end) end
 
-function M.files_picker()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:pick_files()
-end
+function M.files_picker() with_session(function(s) s:pick_files() end) end
 
-function M.clear_files()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  require("review.ui").set_filter(M.session, "")
-end
+function M.clear_files() with_session(function(s) require("review.ui").set_filter(s, "") end) end
 
-function M.viewed(enabled)
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:mark_viewed(enabled)
-end
+function M.viewed(enabled) with_session(function(s) s:mark_viewed(enabled) end) end
 
-function M.toggle_comments()
-  if not M.session or M.session.closed then
-    vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-    return
-  end
-  M.session:toggle_comments()
-end
+function M.toggle_comments() with_session(function(s) s:toggle_comments() end) end
 
 function M._commands()
   local function session_command(name, callback, opts)
     vim.api.nvim_create_user_command(name, function(args)
-      if not M.session or M.session.closed then
-        vim.notify("Open a review with :Review first.", vim.log.levels.WARN, { title = "review" })
-        return
-      end
-      callback(M.session, args)
+      with_session(function(session) callback(session, args) end)
     end, opts)
   end
+  -- A command run from another tab keeps targeting the review last focused.
+  local group = vim.api.nvim_create_augroup("ReviewSessions", { clear = true })
+  vim.api.nvim_create_autocmd("TabEnter", {
+    group = group,
+    callback = function()
+      local session = M.sessions[vim.api.nvim_get_current_tabpage()]
+      if session and not session.closed then M.session = session end
+    end,
+  })
+  -- A tab closed by hand leaves no session behind for later commands.
+  vim.api.nvim_create_autocmd("TabClosed", {
+    group = group,
+    callback = function()
+      for tab, session in pairs(M.sessions) do
+        if not vim.api.nvim_tabpage_is_valid(tab) then
+          M.sessions[tab] = nil
+          if M.session == session then M.session = nil end
+        end
+      end
+    end,
+  })
   vim.api.nvim_create_user_command("Review", function(args) M.open(args.args) end,
     { nargs = "?", desc = "Open a GitLab MR, GitHub PR or Codeberg PR URL" })
   for _, entry in ipairs({
@@ -306,9 +261,9 @@ function M._commands()
     { desc = "Draft a reply to a discussion on the current diff line" })
   vim.api.nvim_create_user_command("ReviewOpenComment", M.open_comment,
     { desc = "Open the comment under the cursor in the browser" })
-  vim.api.nvim_create_user_command("ReviewDrafts", function() if M.session then M.session:show_drafts() end end,
+  vim.api.nvim_create_user_command("ReviewDrafts", function() with_session(function(s) s:show_drafts() end) end,
     { desc = "Inspect, edit or delete local drafts" })
-  vim.api.nvim_create_user_command("ReviewThreads", function() if M.session then M.session:show_threads() end end,
+  vim.api.nvim_create_user_command("ReviewThreads", function() with_session(function(s) s:show_threads() end) end,
     { desc = "Read all review discussions and jump to comment lines" })
   session_command("ReviewThread", function(session) session:show_thread_at_cursor() end,
     { desc = "Read discussions attached to the current diff line" })
@@ -318,7 +273,7 @@ function M._commands()
     { desc = "Show or hide discussions inline in the review diff" })
   vim.api.nvim_create_user_command("ReviewRefresh", M.refresh,
     { desc = "Reload the open review, commits, diffs and discussions" })
-  vim.api.nvim_create_user_command("ReviewSubmit", function() if M.session then M.session:submit() end end,
+  vim.api.nvim_create_user_command("ReviewSubmit", function() with_session(function(s) s:submit() end) end,
     { desc = "Preview and explicitly publish local review comments" })
   vim.api.nvim_create_user_command("ReviewApprove", M.approve,
     { desc = "Approve the open MR/PR" })
@@ -328,7 +283,7 @@ function M._commands()
     { desc = "Resolve the GitLab conversation under the cursor" })
   vim.api.nvim_create_user_command("ReviewResolveAll", M.resolve_all,
     { desc = "Confirm and resolve all unresolved GitLab MR conversations" })
-  vim.api.nvim_create_user_command("ReviewClose", function() if M.session then M.session:close() end end,
+  vim.api.nvim_create_user_command("ReviewClose", function() with_session(function(s) s:close() end) end,
     { desc = "Close the review tab" })
 end
 

@@ -159,9 +159,13 @@ require("review").setup({})
 :Review https://codeberg.org/owner/repo/pulls/123
 ```
 
-Or use `:Review` to enter one URL interactively. A new tab contains the commit/file
-panel on the left and the inline diff on the right. The first commit opens
-automatically. The panel also has a complete MR/PR entry.
+Or use `:Review` to enter one URL interactively. The review opens in the current
+tab when it only holds an untouched empty buffer, otherwise in a new tab. The tab
+contains the commit/file panel on the left and the inline diff on the right. The
+first commit opens automatically. The panel also has a complete MR/PR entry.
+The tab is named `Review !123` for GitLab and `Review #123` for GitHub and
+Codeberg. Opening another review keeps the current one in its own tab, so two
+reviews can stay open side by side.
 
 ![A single commit expanded to show its changed files and inline diff](assets/screenshots/commit-navigation.png)
 
@@ -213,7 +217,7 @@ merge base.
 | `:ReviewRequestChanges` | Request changes on the open MR/PR without submitting local drafts |
 | `:ReviewResolve` | Resolve the GitLab conversation under the cursor |
 | `:ReviewResolveAll` | Warn and confirm before resolving all open GitLab MR conversations |
-| `:ReviewClose` | Close the review tab |
+| `:ReviewClose` | Close the review in the current tab |
 | `:checkhealth review` | Check dependencies |
 
 ### Optional buffer mappings
@@ -398,8 +402,8 @@ panel; enable `keymaps.stack_open` for a shortcut, `<C-b>` in the example above.
 Resting the cursor on a truncated title shows the full title, the pipeline
 status and the approval status on their own coloured lines, and the browser
 shortcut when it is configured.
-`:ReviewStack` lists the chain with full titles and drafts. Opening another
-review closes the current review tab and loads the selected one in a new tab;
+`:ReviewStack` lists the chain with full titles and drafts. Stack navigation
+replaces the current review tab and loads the selected one in a new tab;
 local drafts stay on disk.
 
 Statuses come from one aliased GraphQL query per refresh on GitLab and GitHub.

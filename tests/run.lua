@@ -624,6 +624,39 @@ test("inline discussions default to hidden and validate their configuration", fu
   s:close()
 end)
 
+test("the first review reuses an untouched empty tab and the next one gets its own", function()
+  vim.cmd("tabnew")
+  local before = #vim.api.nvim_list_tabpages()
+  local first = inline_fixture()
+  eq(#vim.api.nvim_list_tabpages(), before)
+  local second = inline_fixture()
+  eq(#vim.api.nvim_list_tabpages(), before + 1)
+  assert(first.tab ~= second.tab)
+  first:close()
+  second:close()
+end)
+
+test("the first review reuses an empty window beside a sidebar", function()
+  vim.cmd("tabnew")
+  local before = #vim.api.nvim_list_tabpages()
+  local sidebar = vim.api.nvim_create_buf(false, true)
+  vim.bo[sidebar].buftype = "nofile"
+  vim.cmd("vsplit")
+  vim.api.nvim_win_set_buf(0, sidebar)
+  vim.cmd("wincmd p")
+  local s = inline_fixture()
+  eq(#vim.api.nvim_list_tabpages(), before)
+  s:close()
+end)
+
+test("review buffers name the tab after the review", function()
+  local s = inline_fixture()
+  eq(vim.api.nvim_buf_get_name(s.viewer_buf), "review://" .. s.serial .. "/viewer/Review !12")
+  eq(vim.api.nvim_buf_get_name(s.panel_buf), "review://" .. s.serial .. "/panel/Review !12")
+  eq(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(s.viewer_buf), ":t"), "Review !12")
+  s:close()
+end)
+
 test("inline discussion ranges anchor on added and deleted lines with all replies", function()
   local s = inline_fixture({ inline_comments = true })
   local marks = comment_marks(s)
@@ -2139,6 +2172,62 @@ test("a failed status read after approval does not report a failed approval", fu
     assert(not table.concat(notifications, "\n"):find("not confirmed", 1, true))
   end)
   s:close()
+end)
+
+test("opening a second review keeps the first one open in its own tab", function()
+  local review = require("review")
+  local Session = require("review.session")
+  local created = {}
+  local function fake(target)
+    local session = {
+      target = target, closed = false,
+      load = function(self)
+        vim.cmd("tabnew")
+        self.tab = vim.api.nvim_get_current_tabpage()
+      end,
+      refresh = function(self) self.refreshed = (self.refreshed or 0) + 1 end,
+      close = function(self)
+        self.closed = true
+        if self.on_close then self.on_close() end
+        if self.tab and vim.api.nvim_tabpage_is_valid(self.tab) then
+          for index, tab in ipairs(vim.api.nvim_list_tabpages()) do
+            if tab == self.tab then vim.cmd(index .. "tabclose"); break end
+          end
+        end
+      end,
+    }
+    created[#created + 1] = session
+    return session
+  end
+  mocked({
+    { Session, "new", fake },
+    { vim.fn, "executable", function() return 1 end },
+  }, function()
+    review.open("https://gitlab.example/group/repo/-/merge_requests/1")
+    review.open("https://gitlab.example/group/repo/-/merge_requests/2")
+    eq(#created, 2)
+    eq(created[1].closed, false)
+    eq(created[2].closed, false)
+    eq(review.session, created[2])
+    eq(review.sessions[created[1].tab], created[1])
+    eq(review.sessions[created[2].tab], created[2])
+    -- Each tab resolves its own review.
+    vim.api.nvim_set_current_tabpage(created[1].tab)
+    eq(review.sessions[vim.api.nvim_get_current_tabpage()], created[1])
+    review.refresh()
+    eq(created[1].refreshed, 1)
+    eq(created[2].refreshed, nil)
+    -- Stack navigation still replaces the review it leaves.
+    vim.api.nvim_set_current_tabpage(created[2].tab)
+    review.open("https://gitlab.example/group/repo/-/merge_requests/3", { replace = true })
+    eq(#created, 3)
+    eq(created[2].closed, true)
+    eq(created[1].closed, false)
+    eq(review.sessions[created[2].tab], nil)
+    created[1]:close()
+    created[3]:close()
+    eq(review.session, nil)
+  end)
 end)
 
 dofile("tests/reactions_resolution.lua")({

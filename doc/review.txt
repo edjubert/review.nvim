@@ -44,9 +44,14 @@ Use clone_protocol = "https" for anonymous Git access to public repositories.
 COMMANDS
 
 :Review [url]                                                       *:Review*
-    Open a GitLab MR, GitHub PR or Codeberg PR in a new tab. Without an
-    argument, prompt for its URL. The URL selects the provider automatically.
-    Codeberg URLs use https://codeberg.org/owner/repo/pulls/123.
+    Open a GitLab MR, GitHub PR or Codeberg PR. Without an argument, prompt
+    for its URL. The URL selects the provider automatically. Codeberg URLs use
+    https://codeberg.org/owner/repo/pulls/123.
+    The review opens in the current tab when it only holds an untouched empty
+    buffer, otherwise in a new tab. The tab is named "Review !123" for GitLab
+    and "Review #123" for GitHub and Codeberg. The current review stays open in
+    its own tab, so two reviews can stay open side by side. :ReviewClose closes
+    the review in the current tab.
 
 :ReviewInfo                                                     *:ReviewInfo*
     Show the loaded MR/PR title and description in a read-only Markdown
@@ -129,7 +134,7 @@ COMMANDS
     the cursor on a truncated title shows the full title, the pipeline status
     and the approval status on their own coloured lines, and the browser
     shortcut when it is set.
-    Opening another review closes the current review tab; local drafts stay on
+    Stack navigation replaces the current review tab; local drafts stay on
     disk.
     A stack is a chain of open reviews where each one targets the source branch
     of the review below it. The chain stops at an ambiguous branch, where
@@ -279,7 +284,7 @@ COMMANDS
     count and the MR number without waiting for reactions to reload.
 
 :ReviewClose                                                  *:ReviewClose*
-    Close the review tab.
+    Close the review in the current tab.
 
 ==============================================================================
 OPTIONAL MAPPINGS                                           *review-mappings*

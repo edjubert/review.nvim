@@ -579,8 +579,8 @@ function Session:open_stack_entry(entry)
     notify("This review has no URL to open.", vim.log.levels.ERROR)
     return
   end
-  -- Opening another review closes this tab and loads the selected one.
-  require("review").open(entry.url)
+  -- Opening another review replaces this tab and loads the selected one.
+  require("review").open(entry.url, { replace = true })
 end
 
 function Session:stack_entry_at_cursor()
@@ -1532,9 +1532,11 @@ function Session:close()
   self.closed = true
   self:cancel_reactions()
   ui.close(self)
+  if self.on_close then self.on_close() end
   if self.tab and vim.api.nvim_tabpage_is_valid(self.tab) then
-    local tabs = vim.api.nvim_list_tabpages()
-    for i, tab in ipairs(tabs) do
+    -- A review opened in the startup tab is the last one: keep a tab to land on.
+    if #vim.api.nvim_list_tabpages() == 1 then vim.cmd("tabnew") end
+    for i, tab in ipairs(vim.api.nvim_list_tabpages()) do
       if tab == self.tab then vim.cmd(i .. "tabclose"); break end
     end
   end

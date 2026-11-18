@@ -319,18 +319,50 @@ function M.bind(session, buf)
   end
 end
 
+-- A window holding one untouched empty buffer is the startup window or a
+-- fresh :tabnew. Reusing its tab avoids leaving an empty tab behind the first
+-- review, even when the tab also holds a sidebar or another split.
+local function reusable_tab()
+  local tab = vim.api.nvim_get_current_tabpage()
+  local win = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_win_get_buf(win)
+  if not (vim.bo[buf].buftype == ""
+    and vim.bo[buf].filetype == ""
+    and vim.api.nvim_buf_get_name(buf) == ""
+    and not vim.bo[buf].modified
+    and vim.api.nvim_buf_line_count(buf) == 1
+    and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
+    and not vim.wo[win].winfixbuf
+    and not vim.wo[win].diff
+    and not vim.wo[win].previewwindow) then return false end
+  -- Never stack a second review in a tab that already shows one.
+  for _, other in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    if other ~= win
+      and vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(other)):match("^review://") then
+      return false
+    end
+  end
+  return true
+end
+
 function M.create(session)
   M.highlights()
   serial = serial + 1
   session.serial = serial
-  vim.cmd("tabnew")
+  if not reusable_tab() then vim.cmd("tabnew") end
   session.tab = vim.api.nvim_get_current_tabpage()
+  -- The default tabline shows the current buffer's tail: name both review
+  -- buffers after the review so the tab keeps one stable title.
+  local title = "Review " .. session.provider.prefix .. session.target.iid
   session.viewer_win = vim.api.nvim_get_current_win()
-  session.viewer_buf = scratch("review://" .. serial .. "/diff", "")
+  session.viewer_buf = scratch("review://" .. serial .. "/viewer/" .. title, "")
   vim.api.nvim_win_set_buf(session.viewer_win, session.viewer_buf)
+  -- A reused window keeps its local options; match a fresh :tabnew window.
+  vim.wo[session.viewer_win].winhighlight = vim.o.winhighlight
+  vim.wo[session.viewer_win].spell = vim.o.spell
   vim.cmd("topleft " .. session.config.panel_width .. "vnew")
   session.panel_win = vim.api.nvim_get_current_win()
-  session.panel_buf = scratch("review://" .. serial .. "/commits", "review")
+  session.panel_buf = scratch("review://" .. serial .. "/panel/" .. title, "review")
   vim.api.nvim_win_set_buf(session.panel_win, session.panel_buf)
   vim.wo[session.panel_win].number = false
   vim.wo[session.panel_win].relativenumber = false
